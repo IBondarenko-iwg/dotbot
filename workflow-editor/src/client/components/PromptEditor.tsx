@@ -53,12 +53,13 @@ export function PromptEditor({
 
   const defaultNewName = `new-${label.toLowerCase()}${extension}`;
 
-  // Load file content on mount
+  // Load file content on mount or when context changes
   useEffect(() => {
     if (!initialFile) return;
     setLoading(true);
     setError(null);
-    api.readWorkflowFile(workflowName, filePath(initialFile))
+    const path = basePath ? `${basePath}/${initialFile}` : initialFile;
+    api.readWorkflowFile(workflowName, path)
       .then((text) => {
         setContent(text);
         setSavedContent(text);
@@ -66,7 +67,7 @@ export function PromptEditor({
       })
       .catch((err) => setError(err.message))
       .finally(() => setLoading(false));
-  }, [workflowName, initialFile]);
+  }, [workflowName, basePath, initialFile]);
 
   const handleNew = useCallback(() => {
     if (dirty && !window.confirm('You have unsaved changes. Discard them?')) return;

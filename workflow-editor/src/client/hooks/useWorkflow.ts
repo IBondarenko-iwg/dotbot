@@ -228,17 +228,34 @@ export function useWorkflow(): WorkflowState & WorkflowActions {
         };
       }),
     );
-    // Update edges if task was renamed
+    // Update edges and other tasks' depends_on if task was renamed
     if (updates.name && updates.name !== taskName) {
+      const newName = updates.name;
       setEdges((prev) =>
         prev.map((edge) => {
-          const newSource = edge.source === taskName ? updates.name! : edge.source;
-          const newTarget = edge.target === taskName ? updates.name! : edge.target;
+          const newSource = edge.source === taskName ? newName : edge.source;
+          const newTarget = edge.target === taskName ? newName : edge.target;
           return {
             ...edge,
             id: `${newSource}->${newTarget}`,
             source: newSource,
             target: newTarget,
+          };
+        }),
+      );
+      // Update depends_on references in all other nodes
+      setNodes((prev) =>
+        prev.map((node) => {
+          if (node.id === newName) return node; // skip the renamed node itself
+          const deps = node.data.task.depends_on;
+          if (!deps || !deps.includes(taskName)) return node;
+          const updatedDeps = deps.map((d) => (d === taskName ? newName : d));
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              task: { ...node.data.task, depends_on: updatedDeps },
+            },
           };
         }),
       );

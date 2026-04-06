@@ -77,6 +77,8 @@ if ($resolvedBase -and ($resolvedSource -eq $resolvedBase)) {
             $staticSrc = Join-Path $editorSrc "static"
             if (Test-Path $staticSrc) {
                 Copy-Item -Path $staticSrc -Destination (Join-Path $editorDest "static") -Recurse -Force
+            } else {
+                Write-DotbotWarning "workflow-editor/static/ not found — the editor UI requires built assets. Run 'npm run build' in workflow-editor/ first."
             }
         }
         
