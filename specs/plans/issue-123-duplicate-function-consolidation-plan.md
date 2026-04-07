@@ -49,39 +49,35 @@
 
 - `TaskMutation.psm1`
   - Responsibility: Continue to own task mutation workflows, but stop owning duplicated general-purpose task helper implementations.
-  - Depends on: shared task helper module.
-
-- `TaskStore.psm1`
-  - Responsibility: Continue to own task state transitions and status directory access.
-  - Depends on: shared task helper module for base task path resolution.
+  - Depends on: `TaskStore.psm1`.
 
 - `TaskAPI.psm1`
   - Responsibility: UI-facing task operations should consume the same task lookup and path-resolution helpers as MCP.
-  - Depends on: shared task helper module.
+  - Depends on: `TaskStore.psm1`.
 
 - `StateBuilder.psm1`
   - Responsibility: Continue building UI state, but read roadmap dependency fallback data through the shared task-domain helper.
-  - Depends on: shared task helper module.
+  - Depends on: `TaskMutation.psm1`.
 
 ### Level 2: Naming Clarification Consumers
 
 - `Platform-Functions.psm1`
-  - Responsibility: Keep install and script output helpers, but avoid exporting or defining a `Write-Status` name that can be mistaken for the runtime theme function.
+  - Responsibility: Keep install and script output helpers. `Write-Status` is removed from this module (Step 2) — it had no `-Type` support and caused load-order bugs.
 
 - `Common.ps1`
-  - Responsibility: Keep dotnet stack-local output behavior or adopt a shared output helper, but avoid a conflicting `Write-Status` symbol.
+  - Responsibility: Remove local `Write-Status` definition; import from `DotBotTheme.psm1` instead.
 
 - `DotBotTheme.psm1`
-  - Responsibility: Remain the canonical runtime/UI themed status writer if the repo chooses a single `Write-Status` owner.
+  - Responsibility: The canonical runtime/UI themed status writer — sole source of `Write-Status` after Step 2.
 
 - `steering.ps1`
-  - Responsibility: Send a whisper to a specific session/process target.
+  - Responsibility: Hosts `Send-WhisperToSession` (renamed from `Send-Whisper` in Step 3) — sends a whisper to a specific session/process target.
 
 - `ControlAPI.psm1`
-  - Responsibility: Send a whisper to one or more running instances selected by type.
+  - Responsibility: Hosts `Send-WhisperToInstance` (renamed from `Send-Whisper` in Step 3) — sends a whisper to one or more running instances selected by type.
 
 - `WorktreeManager.psm1`
-  - Responsibility: Continue to own worktree-path-safe slug generation unless slug behavior is unified across the task system.
+  - Responsibility: Delegates `Get-TaskSlug` to `TaskStore.psm1` (Step 6). Slug generation is unified; WorktreeManager removes its local definition and imports the canonical algorithm.
   - Note: The 50-char truncation in WorktreeManager is a **Windows MAX_PATH defensive measure** (worktree paths become subdirectories on disk), not a Git protocol requirement. Git itself imposes no branch name length limit; `git check-ref-format` enforces character rules only.
 
 ## Consolidation Categories
@@ -128,7 +124,7 @@
   - **Issue recommendation accepted**: extract into a shared module and use the WorktreeManager algorithm as the canonical implementation.
   - The WorktreeManager version is a strict superset of the TaskMutation version: it lowercases first, collapses any non-alphanumeric run to a single dash, trims leading/trailing dashes, and caps at 50 chars. The TaskMutation version does none of the last three.
   - There is no scenario where the weaker TaskMutation algorithm is preferable for worktree naming; adopting the stronger one in both places is safe.
-  - Shared module candidates per issue: `TaskStore.psm1` (already imported by TaskMutation) or a new `SharedUtils.psm1`. Placing it in `TaskStore.psm1` avoids creating a new file and already sits in a location both consumers can reach.
+  - Target module: `TaskStore.psm1` — already imported by `TaskMutation.psm1`, avoids a new file, and sits in a location both consumers can reach. `SharedUtils.psm1` is not needed.
 
 ## Implementation Steps
 
