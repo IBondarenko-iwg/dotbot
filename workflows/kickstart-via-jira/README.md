@@ -12,7 +12,7 @@ Research-driven initiative workflow. Fetches Jira/Confluence context, runs multi
 
 **MCP servers** (register before init):
 - `atlassian` — required for Jira + Confluence access
-- `sourcebot` — optional; only needed if your org runs [Sourcebot](https://sourcebot.dev) for cross-repo code search
+- `sourcebot` — required by this workflow's preflight checks in the UI; used for cross-repo code search if your org runs [Sourcebot](https://sourcebot.dev)
 
 ## Setup
 
@@ -90,16 +90,16 @@ At certain phases, the workflow may pause and show an **◈ Action Required** wi
 | 1a | Plan Internet Research | Creates internet research task | No |
 | 1b | Plan Atlassian Research | Creates Atlassian research task | No |
 | 1c | Plan Sourcebot Research | Creates Sourcebot research task (skipped if no Sourcebot) | No |
-| — | Execute Research | Waits for all research tasks to complete | No |
+| — | Execute Research | Barrier — sync point between research task creation and deep-dive planning | No |
 | 2a | Create Deep-Dive Tasks | Creates one per-repo analysis task per affected repo | No |
-| — | Execute Deep Dives | Waits for all deep-dive tasks to complete | No |
+| — | Execute Deep Dives | Barrier — sync point between deep-dive task creation and research synthesis | No |
 | 3 | Synthesise Research | Merges all research into a summary locally | No |
 | 3b | Publish to Jira | Creates child Jira issue, posts research as comments | **Yes** |
 | 4 | Research Repositories | Synthesises deep dives into implementation guide locally | No |
 | 5 | Refine Dependencies | Writes cross-repo dependency map locally | No |
 | 6 | Generate Implementation Plans | Writes per-repo code-level plans locally | No |
 | 7 | Create Implementation Tasks | Creates per-repo implementation tasks locally | No |
-| — | Execute Implementation | Waits for all implementation tasks to complete | No |
+| — | Execute Implementation | Barrier — sync point between implementation task creation and remediation | No |
 | 9 | Remediate Builds | Fixes build/test failures in local cloned repos | No |
 | 10 | Draft Handoff & PRs | Pushes branches, creates draft PRs in Azure DevOps | **Yes** |
 
@@ -107,7 +107,7 @@ Phases with **Yes** are visible to your team. All others are local-only — safe
 
 ## Outputs
 
-All outputs land in `.bot/workspace/product/`:
+Initiative-level outputs land in `.bot/workspace/product/`. Per-repo outputs land inside each cloned repository under `repos/{RepoName}/.bot/workspace/product/`.
 
 | File | Created by |
 |------|-----------|
