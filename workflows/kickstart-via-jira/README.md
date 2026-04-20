@@ -47,7 +47,7 @@ Edit `.env.local` in the project root:
 ### 4. Register the Atlassian MCP server
 
 ```powershell
-claude mcp add atlassian npx @anthropic/mcp-atlassian
+claude mcp add atlassian -s user npx -- @anthropic/mcp-atlassian
 ```
 
 ### 5. Register Sourcebot (optional)
