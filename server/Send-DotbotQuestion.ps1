@@ -44,7 +44,7 @@
     A unique identifier for the question. Defaults to auto-generated GUID.
 
 .PARAMETER Channel
-    Delivery channel: "teams", "email", or "jira". Default: "teams".
+    Delivery channel: "teams", "email", "jira", or "slack". Default: "teams".
 
 .PARAMETER JiraIssueKey
     Required when -Channel is "jira". The Jira issue key to post the comment to.
@@ -231,10 +231,13 @@ $instanceReq = @{
 }
 
 # Route user to the right recipient field
-if ($User -match '@') {
-    $instanceReq.recipients.emails = @($User)
-} elseif ($Channel -eq 'slack') {
+if ($Channel -eq 'slack') {
+    if ($User -match '@') {
+        throw "Slack delivery requires a Slack user ID in -User, not an email address."
+    }
     $instanceReq.recipients.slackUserIds = @($User)
+} elseif ($User -match '@') {
+    $instanceReq.recipients.emails = @($User)
 } else {
     $instanceReq.recipients.userObjectIds = @($User)
 }
