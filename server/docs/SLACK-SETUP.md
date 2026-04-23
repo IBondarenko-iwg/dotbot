@@ -48,7 +48,21 @@ azurite --location C:\azurite
 # Expect: "Azurite Blob service is starting..."
 ```
 
-Using Azure Storage Explorer, connect to local storage (`UseDevelopmentStorage=true`) and create two blob containers: **`answers`** and **`conversations`**. The server will not create them for you.
+Create the two blob containers the server expects (`answers`, `conversations`) — Azurite won't auto-create them:
+
+```powershell
+az storage container create --name answers       --connection-string "UseDevelopmentStorage=true"
+az storage container create --name conversations --connection-string "UseDevelopmentStorage=true"
+```
+
+No Azure CLI? Use the `Az.Storage` PowerShell module, or Azure Storage Explorer GUI:
+
+```powershell
+# Az.Storage alternative
+$ctx = New-AzStorageContext -ConnectionString "UseDevelopmentStorage=true"
+New-AzStorageContainer -Name answers       -Context $ctx
+New-AzStorageContainer -Name conversations -Context $ctx
+```
 
 ### 2. Create a Slack app
 
