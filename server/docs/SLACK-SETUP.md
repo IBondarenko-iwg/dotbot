@@ -181,7 +181,7 @@ Creating instance for channel 'slack'... Instance created.
 Waiting for response (timeout: 300s)...
 ```
 
-A card appears in your Slack DM from `dotbot-local`. Click a button or **Respond Now**; the script returns the choice and exits.
+A card appears in your Slack DM from `dotbot-local` with the answer options shown in the message. Click **Respond Now** to choose an option; the script returns the choice and exits.
 
 ### Path B — Automated test via dotbot workflow
 
@@ -247,7 +247,7 @@ All server settings resolve through `IConfiguration`, so each key has an equival
 | `DeliveryChannels:Slack:BotToken` | `DeliveryChannels__Slack__BotToken` | `xoxb-...` from the Slack app install |
 | `BaseUrl` | `BaseUrl` | Public URL used for the **Respond Now** magic link (devtunnel URL in local dev, App Service URL in prod) |
 
-Required Slack bot token scopes: `chat:write`, `im:write`, `users:read`, `users:read.email`.
+Required Slack bot token scopes: `chat:write`, `im:write`, `users:read`. Optional: `users:read.email` (only needed to resolve recipients by email).
 
 Shape of `SlackChannelSettings` lives in [server/src/Dotbot.Server/Models/DeliveryChannelSettings.cs](../src/Dotbot.Server/Models/DeliveryChannelSettings.cs). The provider is in [server/src/Dotbot.Server/Services/Delivery/SlackDeliveryProvider.cs](../src/Dotbot.Server/Services/Delivery/SlackDeliveryProvider.cs) — it calls `https://slack.com/api/chat.postMessage` with a Bearer bot token and Block Kit payload.
 
