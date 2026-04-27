@@ -2572,7 +2572,7 @@ if (Test-Path $settingsApiModule) {
     $apiSettingsDir = Join-Path $apiBotDir "settings"
     $apiControlDir = Join-Path $apiBotDir ".control"
     $apiProvidersDir = Join-Path $apiSettingsDir "providers"
-    $apiStaticRoot = Join-Path $apiBotDir "ui\static"
+    $apiStaticRoot = Join-Path (Join-Path $apiBotDir "ui") "static"
     New-Item -ItemType Directory -Path $apiSettingsDir -Force | Out-Null
     New-Item -ItemType Directory -Path $apiControlDir -Force | Out-Null
     New-Item -ItemType Directory -Path $apiProvidersDir -Force | Out-Null
@@ -2581,7 +2581,11 @@ if (Test-Path $settingsApiModule) {
     # Back up real ~/dotbot/user-settings.json (merge chain layer 2)
     $apiUserSettings = Join-Path $HOME "dotbot" "user-settings.json"
     $apiUserExisted = Test-Path $apiUserSettings
-    $apiUserBackup = if ($apiUserExisted) { Get-Content $apiUserSettings -Raw } else { $null }
+    $apiUserBackupPath = if ($apiUserExisted) {
+        $p = [System.IO.Path]::GetTempFileName()
+        Copy-Item $apiUserSettings $p -Force
+        $p
+    } else { $null }
 
     try {
         # Seed shipped defaults — values that should NEVER be mutated by the UI writers.
@@ -2672,7 +2676,10 @@ if (Test-Path $settingsApiModule) {
         Assert-True -Name "#309: Get-MothershipConfig api_key_set" -Condition ($merged.api_key_set -eq $true)
     } finally {
         if (Test-Path $apiUserSettings) { Remove-Item $apiUserSettings -Force }
-        if ($apiUserExisted -and $null -ne $apiUserBackup) { Set-Content $apiUserSettings $apiUserBackup }
+        if ($apiUserExisted -and $apiUserBackupPath) {
+            Copy-Item $apiUserBackupPath $apiUserSettings -Force
+            Remove-Item $apiUserBackupPath -Force -ErrorAction SilentlyContinue
+        }
         Remove-Item $apiFixture -Recurse -Force -ErrorAction SilentlyContinue
     }
 } else {

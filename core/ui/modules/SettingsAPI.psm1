@@ -38,7 +38,13 @@ function Get-OverridesHashtable {
             foreach ($prop in $existing.PSObject.Properties) {
                 $h[$prop.Name] = $prop.Value
             }
-        } catch { Write-BotLog -Level Debug -Message "Failed to parse overrides" -Exception $_ }
+        } catch {
+            if (Get-Command Write-BotLog -ErrorAction SilentlyContinue) {
+                Write-BotLog -Level Debug -Message "Failed to parse overrides" -Exception $_
+            } else {
+                Write-Verbose ("Failed to parse overrides: {0}" -f $_.Exception.Message)
+            }
+        }
     }
     return $h
 }
@@ -50,7 +56,7 @@ function Save-OverridesHashtable {
         New-Item -ItemType Directory -Path $script:Config.ControlDir -Force | Out-Null
     }
     $overridesFile = Join-Path $script:Config.ControlDir "settings.json"
-    $Overrides | ConvertTo-Json -Depth 10 | Set-Content $overridesFile -Force
+    $Overrides | ConvertTo-Json -Depth 10 | Set-Content $overridesFile -Force -Encoding utf8NoBOM
 }
 
 # Internal: merge a partial section (or top-level scalars) into .control/settings.json.
@@ -839,65 +845,59 @@ function Set-MothershipConfig {
     )
     $uiSettingsFile = Join-Path $script:Config.ControlDir "ui-settings.json"
 
-    # Build patch for the mothership section in .control/settings.json (gitignored overrides).
-    $patch = @{}
     $legacySoundEnabled = $null
 
-    # Pre-load existing overrides so we can detect & strip legacy sound_enabled placement,
-    # and support legacy 'notifications' → 'mothership' migration.
+    # Single read of .control/settings.json; mutate in-memory; single save at end.
     $overrides = Get-OverridesHashtable
-    $overridesDirty = $false
+    $dirty = $false
+
+    # Legacy 'notifications' -> 'mothership' migration.
     if ($overrides.ContainsKey('notifications') -and -not $overrides.ContainsKey('mothership')) {
         $overrides['mothership'] = $overrides['notifications']
         $overrides.Remove('notifications')
-        $overridesDirty = $true
+        $dirty = $true
     }
-    if ($overrides.ContainsKey('mothership') -and $overrides['mothership'] -is [PSCustomObject]) {
+
+    # Ensure mothership section is a mutable hashtable.
+    if (-not $overrides.ContainsKey('mothership')) {
+        $overrides['mothership'] = @{}
+    } elseif ($overrides['mothership'] -is [PSCustomObject]) {
         $h = @{}
         foreach ($p in $overrides['mothership'].PSObject.Properties) { $h[$p.Name] = $p.Value }
         $overrides['mothership'] = $h
-        $overridesDirty = $true
+        $dirty = $true
     }
-    if ($overrides.ContainsKey('mothership') -and $overrides['mothership'].ContainsKey('sound_enabled')) {
-        $legacySoundEnabled = [bool]$overrides['mothership']['sound_enabled']
-        $overrides['mothership'].Remove('sound_enabled')
-        $overridesDirty = $true
-    }
-    if ($overridesDirty) {
-        Save-OverridesHashtable -Overrides $overrides
+    $section = $overrides['mothership']
+
+    # Strip legacy sound_enabled (now lives in ui-settings.json, handled below).
+    if ($section.ContainsKey('sound_enabled')) {
+        $legacySoundEnabled = [bool]$section['sound_enabled']
+        $section.Remove('sound_enabled')
+        $dirty = $true
     }
 
-    if ($null -ne $Body.enabled) { $patch.enabled = [bool]$Body.enabled }
-    if ($null -ne $Body.server_url) { $patch.server_url = [string]$Body.server_url }
+    if ($null -ne $Body.enabled)    { $section['enabled']    = [bool]$Body.enabled;      $dirty = $true }
+    if ($null -ne $Body.server_url) { $section['server_url'] = [string]$Body.server_url; $dirty = $true }
     if ($null -ne $Body.channel) {
         $validChannels = @("teams", "email", "jira", "slack")
-        if ($Body.channel -in $validChannels) { $patch.channel = [string]$Body.channel }
+        if ($Body.channel -in $validChannels) { $section['channel'] = [string]$Body.channel; $dirty = $true }
     }
-    if ($null -ne $Body.recipients) {
-        # recipients must REPLACE, not merge -- Merge-DeepSettings concat+dedups scalar arrays.
-        $ov = Get-OverridesHashtable
-        if (-not $ov.ContainsKey('mothership')) { $ov['mothership'] = @{} }
-        if ($ov['mothership'] -is [PSCustomObject]) {
-            $h = @{}
-            foreach ($p in $ov['mothership'].PSObject.Properties) { $h[$p.Name] = $p.Value }
-            $ov['mothership'] = $h
-        }
-        $ov['mothership']['recipients'] = @($Body.recipients)
-        Save-OverridesHashtable -Overrides $ov
-    }
-    if ($null -ne $Body.project_name) { $patch.project_name = [string]$Body.project_name }
-    if ($null -ne $Body.project_description) { $patch.project_description = [string]$Body.project_description }
+    # recipients REPLACE (not merge) -- Merge-DeepSettings concat+dedups scalar arrays.
+    if ($null -ne $Body.recipients) { $section['recipients'] = @($Body.recipients); $dirty = $true }
+    if ($null -ne $Body.project_name)        { $section['project_name']        = [string]$Body.project_name;        $dirty = $true }
+    if ($null -ne $Body.project_description) { $section['project_description'] = [string]$Body.project_description; $dirty = $true }
     if ($null -ne $Body.poll_interval_seconds) {
         $interval = [int]$Body.poll_interval_seconds
         if ($interval -lt 5) { $interval = 5 }
-        $patch.poll_interval_seconds = $interval
+        $section['poll_interval_seconds'] = $interval
+        $dirty = $true
     }
-    if ($null -ne $Body.sync_tasks) { $patch.sync_tasks = [bool]$Body.sync_tasks }
-    if ($null -ne $Body.sync_questions) { $patch.sync_questions = [bool]$Body.sync_questions }
-    if ($null -ne $Body.api_key -and $Body.api_key -ne '') { $patch.api_key = [string]$Body.api_key }
+    if ($null -ne $Body.sync_tasks)     { $section['sync_tasks']     = [bool]$Body.sync_tasks;     $dirty = $true }
+    if ($null -ne $Body.sync_questions) { $section['sync_questions'] = [bool]$Body.sync_questions; $dirty = $true }
+    if ($null -ne $Body.api_key -and $Body.api_key -ne '') { $section['api_key'] = [string]$Body.api_key; $dirty = $true }
 
-    if ($patch.Count -gt 0) {
-        Save-OverrideSection -Key 'mothership' -Patch $patch
+    if ($dirty) {
+        Save-OverridesHashtable -Overrides $overrides
     }
 
     # ui-settings.json: notification sound is a UI-only preference, not a merged setting.
