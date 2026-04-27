@@ -41,8 +41,6 @@ function Get-OverridesHashtable {
         } catch {
             if (Get-Command Write-BotLog -ErrorAction SilentlyContinue) {
                 Write-BotLog -Level Debug -Message "Failed to parse overrides" -Exception $_
-            } else {
-                Write-Verbose ("Failed to parse overrides: {0}" -f $_.Exception.Message)
             }
         }
     }
