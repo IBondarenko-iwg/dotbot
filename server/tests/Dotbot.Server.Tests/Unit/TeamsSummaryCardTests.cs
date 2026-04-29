@@ -49,10 +49,7 @@ public class TeamsSummaryCardTests
     public void Header_RendersProjectTitleAndTypeBadge()
     {
         var card = Render(Summary(title: "Approve v2", type: "approval", projectName: "Atlas"));
-        var texts = Body(card)
-            .SelectMany(FlattenTextBlocks)
-            .Select(b => b.GetProperty("text").GetString())
-            .ToList();
+        var texts = AllTexts(card);
 
         Assert.Contains("Atlas", texts);
         Assert.Contains("Approve v2", texts);
@@ -65,17 +62,14 @@ public class TeamsSummaryCardTests
         var card = Render(Summary(
             deliverableSummary: "Two diagrams + ADR",
             context: "Sign-off needed"));
-        var texts = Body(card)
-            .SelectMany(FlattenTextBlocks)
-            .Select(b => b.GetProperty("text").GetString())
-            .ToList();
+        var texts = AllTexts(card);
 
         Assert.Contains("Two diagrams + ADR", texts);
         Assert.Contains("Sign-off needed", texts);
     }
 
     [Fact]
-    public void BatchQuestions_RenderAsFactSetWithMarkers()
+    public void BatchQuestions_RenderEachAsRichTextBlockWithMarker()
     {
         var card = Render(Summary(batchQuestions: new()
         {
@@ -83,14 +77,10 @@ public class TeamsSummaryCardTests
             new() { QuestionId = Guid.NewGuid(), Title = "Q2", Type = "singleChoice", IsAnswered = true, AnsweredSummary = "A" },
         }));
 
-        var factSet = Body(card).Single(e => e.GetProperty("type").GetString() == "FactSet");
-        var facts = factSet.GetProperty("facts").EnumerateArray().ToList();
+        var texts = AllTexts(card);
 
-        Assert.Equal(2, facts.Count);
-        Assert.Equal("⏳", facts[0].GetProperty("title").GetString());
-        Assert.Equal("Q1 (approval)", facts[0].GetProperty("value").GetString());
-        Assert.Equal("✓", facts[1].GetProperty("title").GetString());
-        Assert.Equal("Q2 (singleChoice) — A", facts[1].GetProperty("value").GetString());
+        Assert.Contains("⏳ Q1 (approval)", texts);
+        Assert.Contains("✓ Q2 (singleChoice) — A", texts);
     }
 
     [Fact]
@@ -103,14 +93,11 @@ public class TeamsSummaryCardTests
             new() { Name = "unknown.bin", ContentType = "application/octet-stream", SizeBytes = null },
         }));
 
-        var texts = Body(card)
-            .SelectMany(FlattenTextBlocks)
-            .Select(b => b.GetProperty("text").GetString()!)
-            .ToList();
+        var texts = AllTexts(card);
 
-        Assert.Contains(texts, t => t == "• spec.pdf (512 KB)");
-        Assert.Contains(texts, t => t == "• tiny.txt (256 B)");
-        Assert.Contains(texts, t => t == "• unknown.bin");
+        Assert.Contains("• spec.pdf (512 KB)", texts);
+        Assert.Contains("• tiny.txt (256 B)", texts);
+        Assert.Contains("• unknown.bin", texts);
         Assert.DoesNotContain(texts, t => t.Contains("http") && t.Contains("spec.pdf"));
     }
 
@@ -134,12 +121,37 @@ public class TeamsSummaryCardTests
         Assert.Equal("https://example/adr/7",
             linkContainers[0].GetProperty("selectAction").GetProperty("url").GetString());
         Assert.Equal("• ADR-7 (requires review)",
-            linkContainers[0].GetProperty("items")[0].GetProperty("text").GetString());
+            ConcatRichTextBlock(linkContainers[0].GetProperty("items")[0]));
 
         Assert.Equal("https://example/design",
             linkContainers[1].GetProperty("selectAction").GetProperty("url").GetString());
         Assert.Equal("• Design",
-            linkContainers[1].GetProperty("items")[0].GetProperty("text").GetString());
+            ConcatRichTextBlock(linkContainers[1].GetProperty("items")[0]));
+    }
+
+    [Fact]
+    public void UntrustedFields_RenderedAsRichTextBlock_NotMarkdown()
+    {
+        // RichTextBlock + TextRun ensures untrusted DTO strings cannot inject markdown
+        // hyperlinks like [click](evil) into the card.
+        var card = Render(Summary(
+            title: "[click me](https://evil.example)",
+            projectName: "**bold**",
+            deliverableSummary: "[exfil](https://evil)"));
+
+        var richTextBlocks = Body(card)
+            .Where(e => e.GetProperty("type").GetString() == "RichTextBlock")
+            .ToList();
+
+        Assert.NotEmpty(richTextBlocks);
+        // No TextBlock should carry the raw untrusted strings (markdown surface)
+        var textBlocks = Body(card)
+            .Where(e => e.GetProperty("type").GetString() == "TextBlock")
+            .Select(e => e.GetProperty("text").GetString())
+            .ToList();
+        Assert.DoesNotContain(textBlocks, t => t!.Contains("[click me]"));
+        Assert.DoesNotContain(textBlocks, t => t!.Contains("**bold**"));
+        Assert.DoesNotContain(textBlocks, t => t!.Contains("[exfil]"));
     }
 
     [Fact]
@@ -182,17 +194,28 @@ public class TeamsSummaryCardTests
         Assert.Single(card.GetProperty("actions").EnumerateArray());
     }
 
-    private static IEnumerable<JsonElement> FlattenTextBlocks(JsonElement element)
+    private static List<string> AllTexts(JsonElement card) =>
+        Body(card).SelectMany(FlattenTextElements)
+            .Select(e => e.GetProperty("type").GetString() == "RichTextBlock"
+                ? ConcatRichTextBlock(e)
+                : e.GetProperty("text").GetString() ?? "")
+            .ToList();
+
+    private static string ConcatRichTextBlock(JsonElement richTextBlock) =>
+        string.Concat(richTextBlock.GetProperty("inlines").EnumerateArray()
+            .Select(r => r.GetProperty("text").GetString() ?? ""));
+
+    private static IEnumerable<JsonElement> FlattenTextElements(JsonElement element)
     {
         var type = element.GetProperty("type").GetString();
-        if (type == "TextBlock")
+        if (type is "TextBlock" or "RichTextBlock")
         {
             yield return element;
         }
         else if (type == "Container" && element.TryGetProperty("items", out var items))
         {
             foreach (var item in items.EnumerateArray())
-                foreach (var inner in FlattenTextBlocks(item))
+                foreach (var inner in FlattenTextElements(item))
                     yield return inner;
         }
     }

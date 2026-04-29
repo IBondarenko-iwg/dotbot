@@ -289,6 +289,12 @@ public class SlackDeliveryProvider : IQuestionDeliveryProvider
     private static string EscapeLinkLabel(string value) =>
         Escape(value).Replace("|", "&#124;");
 
+    // Escape a value rendered inside a Slack code-span (`...`). A backtick terminates the span,
+    // re-enabling mrkdwn formatting on the surrounding text. No HTML entity exists for backtick
+    // inside a code-span; substitute the visually similar U+02CB (modifier letter grave accent).
+    private static string EscapeCodeSpan(string value) =>
+        Escape(value).Replace("`", "ˋ");
+
     public static List<object> BuildSummaryBlocks(NotificationSummary summary)
     {
         var blocks = new List<object>();
@@ -302,7 +308,7 @@ public class SlackDeliveryProvider : IQuestionDeliveryProvider
         var meta = new List<string>
         {
             $":robot_face: {Escape(summary.ProjectName)}",
-            $"`{Escape(summary.QuestionType)}`"
+            $"`{EscapeCodeSpan(summary.QuestionType)}`"
         };
         blocks.Add(new
         {
@@ -338,11 +344,11 @@ public class SlackDeliveryProvider : IQuestionDeliveryProvider
                     var ans = !string.IsNullOrWhiteSpace(q.AnsweredSummary)
                         ? $" — _{Escape(q.AnsweredSummary)}_"
                         : "";
-                    sb.AppendLine($"✓ {Escape(q.Title)} (`{Escape(q.Type)}`){ans}");
+                    sb.AppendLine($"✓ {Escape(q.Title)} (`{EscapeCodeSpan(q.Type)}`){ans}");
                 }
                 else
                 {
-                    sb.AppendLine($"• {Escape(q.Title)} (`{Escape(q.Type)}`)");
+                    sb.AppendLine($"• {Escape(q.Title)} (`{EscapeCodeSpan(q.Type)}`)");
                 }
             }
             blocks.Add(new
@@ -357,7 +363,7 @@ public class SlackDeliveryProvider : IQuestionDeliveryProvider
             var sb = new StringBuilder("*Attachments*\n");
             foreach (var a in summary.Attachments)
             {
-                sb.AppendLine($"• {Escape(a.Name)}{FormatSize(a.SizeBytes)}");
+                sb.AppendLine($"• {Escape(a.Name)}{SummaryFormatting.FormatAttachmentSize(a.SizeBytes)}");
             }
             blocks.Add(new
             {
@@ -371,8 +377,16 @@ public class SlackDeliveryProvider : IQuestionDeliveryProvider
             var sb = new StringBuilder("*Review links*\n");
             foreach (var link in summary.ReviewLinks)
             {
+                // Skip non-absolute or non-http(s) URLs to block scheme spoofing (javascript:,
+                // data:, etc.) and parity with Teams card validation.
+                if (!Uri.TryCreate(link.Url, UriKind.Absolute, out var linkUri) ||
+                    (linkUri.Scheme != Uri.UriSchemeHttp && linkUri.Scheme != Uri.UriSchemeHttps))
+                {
+                    continue;
+                }
+
                 var marker = !string.IsNullOrWhiteSpace(link.Type) ? " _(requires review)_" : "";
-                sb.AppendLine($"• <{link.Url}|{EscapeLinkLabel(link.Title)}>{marker}");
+                sb.AppendLine($"• <{linkUri.AbsoluteUri}|{EscapeLinkLabel(link.Title)}>{marker}");
             }
             blocks.Add(new
             {
@@ -397,16 +411,6 @@ public class SlackDeliveryProvider : IQuestionDeliveryProvider
         });
 
         return blocks;
-    }
-
-    private static string FormatSize(long? sizeBytes)
-    {
-        if (!sizeBytes.HasValue) return "";
-        var b = sizeBytes.Value;
-        var inv = System.Globalization.CultureInfo.InvariantCulture;
-        if (b < 1024) return $" ({b} B)";
-        if (b < 1024 * 1024) return $" ({(b / 1024.0).ToString("0.#", inv)} KB)";
-        return $" ({(b / (1024.0 * 1024.0)).ToString("0.#", inv)} MB)";
     }
 
     private static string Truncate(string s, int max) =>

@@ -132,6 +132,28 @@ public class SlackSummaryBlocksTests
     }
 
     [Fact]
+    public void ReviewLinks_SkipsMalformedAndNonHttpSchemes()
+    {
+        var blocks = Render(Summary(reviewLinks: new()
+        {
+            new() { Title = "Bad", Url = "not a url", Type = null },
+            new() { Title = "Spoof", Url = "javascript:alert(1)", Type = null },
+            new() { Title = "Data", Url = "data:text/html,<x>", Type = null },
+            new() { Title = "Good", Url = "https://example/ok", Type = null },
+        }));
+
+        var section = blocks
+            .Where(b => b.GetProperty("type").GetString() == "section")
+            .Select(b => b.GetProperty("text").GetProperty("text").GetString()!)
+            .Single(t => t.Contains("Review links"));
+
+        Assert.Contains("• <https://example/ok|Good>", section);
+        Assert.DoesNotContain("Bad", section);
+        Assert.DoesNotContain("javascript:", section);
+        Assert.DoesNotContain("data:", section);
+    }
+
+    [Fact]
     public void Actions_SingleRespondNowButton()
     {
         var blocks = Render(Summary(respondUrl: "https://example/respond/xyz"));

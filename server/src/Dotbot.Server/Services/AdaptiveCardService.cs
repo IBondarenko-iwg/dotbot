@@ -176,7 +176,9 @@ public class AdaptiveCardService
 
         var body = new List<AdaptiveElement>();
 
-        // Project banner
+        // Project banner. RichTextBlock + TextRun renders DTO strings as literal text — never
+        // parsed as Markdown, so untrusted fields (project names, titles, attachment names, etc.)
+        // cannot inject `[label](url)` hyperlinks or other formatting into the card.
         body.Add(new AdaptiveContainer
         {
             Style = AdaptiveContainerStyle.Emphasis,
@@ -184,55 +186,68 @@ public class AdaptiveCardService
             Spacing = AdaptiveSpacing.None,
             Items = new List<AdaptiveElement>
             {
-                new AdaptiveTextBlock
+                new AdaptiveRichTextBlock
                 {
-                    Text = summary.ProjectName,
-                    Wrap = true,
-                    Weight = AdaptiveTextWeight.Bolder,
-                    Size = AdaptiveTextSize.Medium,
-                    Color = AdaptiveTextColor.Good
+                    Inlines = new List<AdaptiveInline>
+                    {
+                        new AdaptiveTextRun
+                        {
+                            Text = summary.ProjectName,
+                            Weight = AdaptiveTextWeight.Bolder,
+                            Size = AdaptiveTextSize.Medium,
+                            Color = AdaptiveTextColor.Good
+                        }
+                    }
                 }
             }
         });
 
         // Header: title + type badge
-        body.Add(new AdaptiveTextBlock
+        body.Add(new AdaptiveRichTextBlock
         {
-            Text = summary.QuestionTitle,
-            Wrap = true,
-            Weight = AdaptiveTextWeight.Bolder,
-            Size = AdaptiveTextSize.Large,
-            Color = AdaptiveTextColor.Warning,
-            Separator = true
+            Separator = true,
+            Inlines = new List<AdaptiveInline>
+            {
+                new AdaptiveTextRun
+                {
+                    Text = summary.QuestionTitle,
+                    Weight = AdaptiveTextWeight.Bolder,
+                    Size = AdaptiveTextSize.Large,
+                    Color = AdaptiveTextColor.Warning
+                }
+            }
         });
-        body.Add(new AdaptiveTextBlock
+        body.Add(new AdaptiveRichTextBlock
         {
-            Text = $"Type: {summary.QuestionType}",
-            Wrap = true,
-            IsSubtle = true,
-            Size = AdaptiveTextSize.Small,
-            Spacing = AdaptiveSpacing.None
+            Spacing = AdaptiveSpacing.None,
+            Inlines = new List<AdaptiveInline>
+            {
+                new AdaptiveTextRun { Text = "Type: ", Size = AdaptiveTextSize.Small },
+                new AdaptiveTextRun { Text = summary.QuestionType, Size = AdaptiveTextSize.Small }
+            }
         });
 
         if (!string.IsNullOrWhiteSpace(summary.DeliverableSummary))
         {
-            body.Add(new AdaptiveTextBlock
+            body.Add(new AdaptiveRichTextBlock
             {
-                Text = summary.DeliverableSummary,
-                Wrap = true,
-                Spacing = AdaptiveSpacing.Medium
+                Spacing = AdaptiveSpacing.Medium,
+                Inlines = new List<AdaptiveInline>
+                {
+                    new AdaptiveTextRun { Text = summary.DeliverableSummary }
+                }
             });
         }
 
         if (!string.IsNullOrWhiteSpace(summary.Context))
         {
-            body.Add(new AdaptiveTextBlock
+            body.Add(new AdaptiveRichTextBlock
             {
-                Text = summary.Context,
-                Wrap = true,
-                IsSubtle = true,
-                Size = AdaptiveTextSize.Small,
-                Spacing = AdaptiveSpacing.Small
+                Spacing = AdaptiveSpacing.Small,
+                Inlines = new List<AdaptiveInline>
+                {
+                    new AdaptiveTextRun { Text = summary.Context, Size = AdaptiveTextSize.Small }
+                }
             });
         }
 
@@ -246,16 +261,27 @@ public class AdaptiveCardService
                 Spacing = AdaptiveSpacing.Medium,
                 Separator = true
             });
-            body.Add(new AdaptiveFactSet
+            foreach (var q in summary.BatchQuestions)
             {
-                Facts = summary.BatchQuestions.Select(q => new AdaptiveFact
+                var inlines = new List<AdaptiveInline>
                 {
-                    Title = q.IsAnswered ? "✓" : "⏳",
-                    Value = !string.IsNullOrWhiteSpace(q.AnsweredSummary)
-                        ? $"{q.Title} ({q.Type}) — {q.AnsweredSummary}"
-                        : $"{q.Title} ({q.Type})"
-                }).ToList()
-            });
+                    new AdaptiveTextRun { Text = q.IsAnswered ? "✓ " : "⏳ ", Size = AdaptiveTextSize.Small },
+                    new AdaptiveTextRun { Text = q.Title, Size = AdaptiveTextSize.Small },
+                    new AdaptiveTextRun { Text = " (", Size = AdaptiveTextSize.Small },
+                    new AdaptiveTextRun { Text = q.Type, Size = AdaptiveTextSize.Small },
+                    new AdaptiveTextRun { Text = ")", Size = AdaptiveTextSize.Small }
+                };
+                if (!string.IsNullOrWhiteSpace(q.AnsweredSummary))
+                {
+                    inlines.Add(new AdaptiveTextRun { Text = " — ", Size = AdaptiveTextSize.Small });
+                    inlines.Add(new AdaptiveTextRun { Text = q.AnsweredSummary, Size = AdaptiveTextSize.Small });
+                }
+                body.Add(new AdaptiveRichTextBlock
+                {
+                    Spacing = AdaptiveSpacing.None,
+                    Inlines = inlines
+                });
+            }
         }
 
         if (summary.Attachments.Count > 0)
@@ -270,12 +296,15 @@ public class AdaptiveCardService
             });
             foreach (var a in summary.Attachments)
             {
-                body.Add(new AdaptiveTextBlock
+                body.Add(new AdaptiveRichTextBlock
                 {
-                    Text = $"• {a.Name}{FormatSize(a.SizeBytes)}",
-                    Wrap = true,
-                    Size = AdaptiveTextSize.Small,
-                    Spacing = AdaptiveSpacing.None
+                    Spacing = AdaptiveSpacing.None,
+                    Inlines = new List<AdaptiveInline>
+                    {
+                        new AdaptiveTextRun { Text = "• ", Size = AdaptiveTextSize.Small },
+                        new AdaptiveTextRun { Text = a.Name, Size = AdaptiveTextSize.Small },
+                        new AdaptiveTextRun { Text = SummaryFormatting.FormatAttachmentSize(a.SizeBytes), Size = AdaptiveTextSize.Small }
+                    }
                 });
             }
         }
@@ -297,21 +326,23 @@ public class AdaptiveCardService
                     continue;
                 }
 
-                var marker = !string.IsNullOrWhiteSpace(link.Type) ? " (requires review)" : "";
+                var inlines = new List<AdaptiveInline>
+                {
+                    new AdaptiveTextRun { Text = "• ", Size = AdaptiveTextSize.Small, Color = AdaptiveTextColor.Accent },
+                    new AdaptiveTextRun { Text = link.Title, Size = AdaptiveTextSize.Small, Color = AdaptiveTextColor.Accent }
+                };
+                if (!string.IsNullOrWhiteSpace(link.Type))
+                {
+                    inlines.Add(new AdaptiveTextRun { Text = " (requires review)", Size = AdaptiveTextSize.Small, Color = AdaptiveTextColor.Accent });
+                }
+
                 body.Add(new AdaptiveContainer
                 {
                     Spacing = AdaptiveSpacing.None,
                     SelectAction = new AdaptiveOpenUrlAction { Url = linkUri },
                     Items = new List<AdaptiveElement>
                     {
-                        new AdaptiveTextBlock
-                        {
-                            Text = $"• {link.Title}{marker}",
-                            Wrap = true,
-                            Size = AdaptiveTextSize.Small,
-                            Color = AdaptiveTextColor.Accent,
-                            Spacing = AdaptiveSpacing.None
-                        }
+                        new AdaptiveRichTextBlock { Inlines = inlines }
                     }
                 });
             }
@@ -331,16 +362,6 @@ public class AdaptiveCardService
             Body = body,
             Actions = actions
         };
-    }
-
-    private static string FormatSize(long? sizeBytes)
-    {
-        if (!sizeBytes.HasValue) return "";
-        var b = sizeBytes.Value;
-        var inv = System.Globalization.CultureInfo.InvariantCulture;
-        if (b < 1024) return $" ({b} B)";
-        if (b < 1024 * 1024) return $" ({(b / 1024.0).ToString("0.#", inv)} KB)";
-        return $" ({(b / (1024.0 * 1024.0)).ToString("0.#", inv)} MB)";
     }
 
     /// <summary>
