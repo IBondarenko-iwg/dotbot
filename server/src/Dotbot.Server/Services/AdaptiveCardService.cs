@@ -1,5 +1,6 @@
 using AdaptiveCards;
 using Dotbot.Server.Models;
+using Dotbot.Server.Services.Delivery;
 using System.Text.Json;
 
 namespace Dotbot.Server.Services;
@@ -159,6 +160,165 @@ public class AdaptiveCardService
             Body = body,
             Actions = actions
         };
+    }
+
+    /// <summary>
+    /// Renders a NotificationSummary as a triage Adaptive Card with a single Respond Now action.
+    /// </summary>
+    public AdaptiveCard CreateSummaryCard(NotificationSummary summary)
+    {
+        var body = new List<AdaptiveElement>();
+
+        // Project banner
+        body.Add(new AdaptiveContainer
+        {
+            Style = AdaptiveContainerStyle.Emphasis,
+            Bleed = true,
+            Spacing = AdaptiveSpacing.None,
+            Items = new List<AdaptiveElement>
+            {
+                new AdaptiveTextBlock
+                {
+                    Text = summary.ProjectName,
+                    Wrap = true,
+                    Weight = AdaptiveTextWeight.Bolder,
+                    Size = AdaptiveTextSize.Medium,
+                    Color = AdaptiveTextColor.Good
+                }
+            }
+        });
+
+        // Header: title + type badge
+        body.Add(new AdaptiveTextBlock
+        {
+            Text = summary.QuestionTitle,
+            Wrap = true,
+            Weight = AdaptiveTextWeight.Bolder,
+            Size = AdaptiveTextSize.Large,
+            Color = AdaptiveTextColor.Warning,
+            Separator = true
+        });
+        body.Add(new AdaptiveTextBlock
+        {
+            Text = $"Type: {summary.QuestionType}",
+            Wrap = true,
+            IsSubtle = true,
+            Size = AdaptiveTextSize.Small,
+            Spacing = AdaptiveSpacing.None
+        });
+
+        if (!string.IsNullOrWhiteSpace(summary.DeliverableSummary))
+        {
+            body.Add(new AdaptiveTextBlock
+            {
+                Text = summary.DeliverableSummary,
+                Wrap = true,
+                Spacing = AdaptiveSpacing.Medium
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(summary.Context))
+        {
+            body.Add(new AdaptiveTextBlock
+            {
+                Text = summary.Context,
+                Wrap = true,
+                IsSubtle = true,
+                Size = AdaptiveTextSize.Small,
+                Spacing = AdaptiveSpacing.Small
+            });
+        }
+
+        if (summary.BatchQuestions.Count > 0)
+        {
+            body.Add(new AdaptiveTextBlock
+            {
+                Text = "Questions in this batch",
+                Weight = AdaptiveTextWeight.Bolder,
+                Size = AdaptiveTextSize.Small,
+                Spacing = AdaptiveSpacing.Medium,
+                Separator = true
+            });
+            body.Add(new AdaptiveFactSet
+            {
+                Facts = summary.BatchQuestions.Select(q => new AdaptiveFact
+                {
+                    Title = q.IsAnswered ? "✓" : "⏳",
+                    Value = !string.IsNullOrWhiteSpace(q.AnsweredSummary)
+                        ? $"{q.Title} ({q.Type}) — {q.AnsweredSummary}"
+                        : $"{q.Title} ({q.Type})"
+                }).ToList()
+            });
+        }
+
+        if (summary.Attachments.Count > 0)
+        {
+            body.Add(new AdaptiveTextBlock
+            {
+                Text = "Attachments",
+                Weight = AdaptiveTextWeight.Bolder,
+                Size = AdaptiveTextSize.Small,
+                Spacing = AdaptiveSpacing.Medium,
+                Separator = true
+            });
+            foreach (var a in summary.Attachments)
+            {
+                body.Add(new AdaptiveTextBlock
+                {
+                    Text = $"• {a.Name}{FormatSize(a.SizeBytes)}",
+                    Wrap = true,
+                    Size = AdaptiveTextSize.Small,
+                    Spacing = AdaptiveSpacing.None
+                });
+            }
+        }
+
+        if (summary.ReviewLinks.Count > 0)
+        {
+            body.Add(new AdaptiveTextBlock
+            {
+                Text = "Review links",
+                Weight = AdaptiveTextWeight.Bolder,
+                Size = AdaptiveTextSize.Small,
+                Spacing = AdaptiveSpacing.Medium,
+                Separator = true
+            });
+            foreach (var link in summary.ReviewLinks)
+            {
+                var marker = !string.IsNullOrWhiteSpace(link.Type) ? " (requires review)" : "";
+                body.Add(new AdaptiveTextBlock
+                {
+                    Text = $"• [{link.Title}]({link.Url}){marker}",
+                    Wrap = true,
+                    Size = AdaptiveTextSize.Small,
+                    Spacing = AdaptiveSpacing.None
+                });
+            }
+        }
+
+        var actions = new List<AdaptiveAction>
+        {
+            new AdaptiveOpenUrlAction
+            {
+                Title = "Respond Now",
+                Url = new Uri(summary.RespondUrl)
+            }
+        };
+
+        return new AdaptiveCard(new AdaptiveSchemaVersion(1, 5))
+        {
+            Body = body,
+            Actions = actions
+        };
+    }
+
+    private static string FormatSize(long? sizeBytes)
+    {
+        if (!sizeBytes.HasValue) return "";
+        var b = sizeBytes.Value;
+        if (b < 1024) return $" ({b} B)";
+        if (b < 1024 * 1024) return $" ({b / 1024.0:0.#} KB)";
+        return $" ({b / (1024.0 * 1024.0):0.#} MB)";
     }
 
     /// <summary>

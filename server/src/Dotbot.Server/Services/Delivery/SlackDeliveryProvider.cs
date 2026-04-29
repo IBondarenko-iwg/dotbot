@@ -53,12 +53,24 @@ public class SlackDeliveryProvider : IQuestionDeliveryProvider
 
         var displayName = await ResolveDisplayNameAsync(slackUserId, ct);
         var template = context.Template;
-        var blocks = BuildBlocks(template, context.MagicLinkUrl, context.IsReminder, displayName);
+
+        List<object> blocks;
+        string fallbackText;
+        if (context.Summary is not null)
+        {
+            blocks = BuildSummaryBlocks(context.Summary);
+            fallbackText = $"{context.Summary.ProjectName}: {context.Summary.QuestionTitle}";
+        }
+        else
+        {
+            blocks = BuildBlocks(template, context.MagicLinkUrl, context.IsReminder, displayName);
+            fallbackText = $"{template.Project.Name}: {template.Title}";
+        }
 
         var payload = new
         {
             channel = slackUserId,
-            text = $"{template.Project.Name}: {template.Title}",
+            text = fallbackText,
             blocks
         };
 
@@ -271,4 +283,126 @@ public class SlackDeliveryProvider : IQuestionDeliveryProvider
     // Escape Slack mrkdwn special characters in plain text values
     private static string Escape(string value) =>
         value.Replace("&", "&amp;").Replace("<", "&lt;").Replace(">", "&gt;");
+
+    public static List<object> BuildSummaryBlocks(NotificationSummary summary)
+    {
+        var blocks = new List<object>();
+
+        blocks.Add(new
+        {
+            type = "header",
+            text = new { type = "plain_text", text = Truncate(summary.QuestionTitle, 150), emoji = false }
+        });
+
+        var meta = new List<string>
+        {
+            $":robot_face: {Escape(summary.ProjectName)}",
+            $"`{Escape(summary.QuestionType)}`"
+        };
+        blocks.Add(new
+        {
+            type = "context",
+            elements = new[] { new { type = "mrkdwn", text = string.Join("  ·  ", meta) } }
+        });
+
+        if (!string.IsNullOrWhiteSpace(summary.DeliverableSummary))
+        {
+            blocks.Add(new
+            {
+                type = "section",
+                text = new { type = "mrkdwn", text = $"*Summary*\n{Escape(summary.DeliverableSummary)}" }
+            });
+        }
+
+        if (!string.IsNullOrWhiteSpace(summary.Context))
+        {
+            blocks.Add(new
+            {
+                type = "section",
+                text = new { type = "mrkdwn", text = Escape(summary.Context) }
+            });
+        }
+
+        if (summary.BatchQuestions.Count > 0)
+        {
+            var sb = new StringBuilder("*Questions in this batch*\n");
+            foreach (var q in summary.BatchQuestions)
+            {
+                if (q.IsAnswered)
+                {
+                    var ans = !string.IsNullOrWhiteSpace(q.AnsweredSummary)
+                        ? $" — _{Escape(q.AnsweredSummary)}_"
+                        : "";
+                    sb.AppendLine($"✓ {Escape(q.Title)} (`{Escape(q.Type)}`){ans}");
+                }
+                else
+                {
+                    sb.AppendLine($"• {Escape(q.Title)} (`{Escape(q.Type)}`)");
+                }
+            }
+            blocks.Add(new
+            {
+                type = "section",
+                text = new { type = "mrkdwn", text = sb.ToString().TrimEnd() }
+            });
+        }
+
+        if (summary.Attachments.Count > 0)
+        {
+            var sb = new StringBuilder("*Attachments*\n");
+            foreach (var a in summary.Attachments)
+            {
+                sb.AppendLine($"• {Escape(a.Name)}{FormatSize(a.SizeBytes)}");
+            }
+            blocks.Add(new
+            {
+                type = "section",
+                text = new { type = "mrkdwn", text = sb.ToString().TrimEnd() }
+            });
+        }
+
+        if (summary.ReviewLinks.Count > 0)
+        {
+            var sb = new StringBuilder("*Review links*\n");
+            foreach (var link in summary.ReviewLinks)
+            {
+                var marker = !string.IsNullOrWhiteSpace(link.Type) ? " _(requires review)_" : "";
+                sb.AppendLine($"• <{link.Url}|{Escape(link.Title)}>{marker}");
+            }
+            blocks.Add(new
+            {
+                type = "section",
+                text = new { type = "mrkdwn", text = sb.ToString().TrimEnd() }
+            });
+        }
+
+        blocks.Add(new
+        {
+            type = "actions",
+            elements = new[]
+            {
+                new
+                {
+                    type = "button",
+                    text = new { type = "plain_text", text = "Respond Now", emoji = false },
+                    url = summary.RespondUrl,
+                    style = "primary"
+                }
+            }
+        });
+
+        return blocks;
+    }
+
+    private static string FormatSize(long? sizeBytes)
+    {
+        if (!sizeBytes.HasValue) return "";
+        var b = sizeBytes.Value;
+        if (b < 1024) return $" ({b} B)";
+        if (b < 1024 * 1024) return $" ({b / 1024.0:0.#} KB)";
+        return $" ({b / (1024.0 * 1024.0):0.#} MB)";
+    }
+
+    private static string Truncate(string s, int max) =>
+        string.IsNullOrEmpty(s) ? s : (s.Length <= max ? s : s.Substring(0, max));
 }
