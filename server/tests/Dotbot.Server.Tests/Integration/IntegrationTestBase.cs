@@ -19,8 +19,5 @@ public abstract class IntegrationTestBase : IClassFixture<DotbotApiFactory>, IAs
         await Storage.ResetAsync();
     }
 
-    public async Task DisposeAsync()
-    {
-        await Task.CompletedTask;
-    }
+    public Task DisposeAsync() => Task.CompletedTask;
 }

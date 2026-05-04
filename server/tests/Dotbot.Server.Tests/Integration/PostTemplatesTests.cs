@@ -80,7 +80,9 @@ public class PostTemplatesTests : IntegrationTestBase
     [Fact]
     public async Task MultiFieldInvalidPayload_Returns400WithAllViolations()
     {
-        // Exactly three violations: empty questionId, empty projectId, unknown type.
+        // Payload triggers at least three known violations: empty questionId, empty projectId,
+        // unknown type. Assertions check those are present and that returned errors are unique;
+        // exact count is intentionally not asserted so new validator rules don't break this test.
         var payload = new
         {
             questionId = Guid.Empty,
