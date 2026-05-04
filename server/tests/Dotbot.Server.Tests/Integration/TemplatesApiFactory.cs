@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace Dotbot.Server.Tests.Integration;
 
@@ -34,6 +35,17 @@ public sealed class TemplatesApiFactory : WebApplicationFactory<Program>
 
         builder.ConfigureServices(services =>
         {
+            // M365 Agents SDK's HostedTaskService.StopAsync recursively acquires a
+            // ReaderWriterLockSlim write lock during host shutdown, which throws
+            // LockRecursionException on Linux. The agent runtime is not exercised by
+            // these HTTP tests, so drop the hosted service before the host runs.
+            var hostedTaskDescriptors = services
+                .Where(d => d.ServiceType == typeof(IHostedService)
+                    && (d.ImplementationType?.FullName?.Contains("HostedTaskService", StringComparison.Ordinal) ?? false))
+                .ToList();
+            foreach (var descriptor in hostedTaskDescriptors)
+                services.Remove(descriptor);
+
             // Replace the three DI-blocking services with in-process test doubles.
             services.RemoveAll<ITemplateStorageService>();
             services.RemoveAll<IAdministratorService>();
