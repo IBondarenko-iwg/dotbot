@@ -85,21 +85,20 @@ try
     builder.AddAgent<DotbotAgent>();
     builder.Services.AddSingleton<IStorage, MemoryStorage>();
 
-    // Azure Blob Storage — Managed Identity in production, connection string fallback for local dev
-    var blobAccountUri = builder.Configuration["BlobStorage:AccountUri"];
-    var blobConnectionString = builder.Configuration["BlobStorage:ConnectionString"];
-    if (!string.IsNullOrEmpty(blobAccountUri))
+    // Azure Blob Storage — Managed Identity in production, connection string fallback for local dev.
+    // Factory delegate defers config reads to DI resolution time so test overrides apply.
+    builder.Services.AddSingleton(sp =>
     {
-        builder.Services.AddSingleton(new BlobServiceClient(new Uri(blobAccountUri), new DefaultAzureCredential()));
-    }
-    else if (!string.IsNullOrEmpty(blobConnectionString))
-    {
-        builder.Services.AddSingleton(new BlobServiceClient(blobConnectionString));
-    }
-    else
-    {
-        throw new InvalidOperationException("Either BlobStorage:AccountUri or BlobStorage:ConnectionString must be configured");
-    }
+        var config = sp.GetRequiredService<IConfiguration>();
+        var accountUri = config["BlobStorage:AccountUri"];
+        var connectionString = config["BlobStorage:ConnectionString"];
+        if (!string.IsNullOrEmpty(accountUri))
+            return new BlobServiceClient(new Uri(accountUri), new DefaultAzureCredential());
+        if (!string.IsNullOrEmpty(connectionString))
+            return new BlobServiceClient(connectionString);
+        throw new InvalidOperationException(
+            "Either BlobStorage:AccountUri or BlobStorage:ConnectionString must be configured");
+    });
 
     // Configuration bindings
     builder.Services.Configure<AuthSettings>(builder.Configuration.GetSection("Auth"));
