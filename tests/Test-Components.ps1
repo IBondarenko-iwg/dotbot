@@ -2518,23 +2518,29 @@ if (Test-Path $notifModule) {
         -Message "Expected 2 DELETE calls (sref-1, sref-2), got: $(@($script:deletedRefs) -join ', ')"
 
     # ── Poller persists typed-response fields without eager-download ─
-    # Reuse the layer-2 $botDir (which has the full module tree at
-    # core/mcp/modules/NotificationClient.psm1) — Invoke-NotificationPollTick
-    # silently no-ops if that module is missing under the BotRoot it receives.
+    # Use an isolated temp .bot to avoid contaminating the shared layer-2
+    # $botDir. Invoke-NotificationPollTick resolves NotificationClient.psm1
+    # relative to its BotRoot and silently returns when missing, so copy the
+    # two needed modules into the temp tree.
     $pollerMod = Join-Path $botDir "core/ui/modules/NotificationPoller.psm1"
     if (Test-Path $pollerMod) {
-        $pollerTaskId = "poll-typed-" + [guid]::NewGuid().ToString('N').Substring(0,6)
-        $pollerNeedsInput = Join-Path $botDir "workspace/tasks/needs-input"
-        $pollerAnalysing  = Join-Path $botDir "workspace/tasks/analysing"
-        if (-not (Test-Path $pollerNeedsInput)) { New-Item -ItemType Directory -Force -Path $pollerNeedsInput | Out-Null }
-        if (-not (Test-Path $pollerAnalysing))  { New-Item -ItemType Directory -Force -Path $pollerAnalysing  | Out-Null }
+        $pollerTaskId = "poll-typed-1"
+        $tempBot = Join-Path ([System.IO.Path]::GetTempPath()) ("dotbot-poller-test-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+        $tempBotDir = Join-Path $tempBot ".bot"
+        New-Item -ItemType Directory -Force -Path (Join-Path $tempBotDir "settings") | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $tempBotDir "workspace/tasks/needs-input") | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $tempBotDir "workspace/tasks/analysing") | Out-Null
+        New-Item -ItemType Directory -Force -Path (Join-Path $tempBotDir ".control") | Out-Null
 
-        # Enable mothership via .control/settings.json (highest precedence)
-        $pollerControlDir  = Join-Path $botDir ".control"
-        if (-not (Test-Path $pollerControlDir)) { New-Item -ItemType Directory -Force -Path $pollerControlDir | Out-Null }
-        $pollerControlFile = Join-Path $pollerControlDir "settings.json"
-        $pollerControlBackup = $null
-        if (Test-Path $pollerControlFile) { $pollerControlBackup = Get-Content $pollerControlFile -Raw }
+        # Copy the two modules the poller resolves relative to BotRoot.
+        $tempMcpModules = Join-Path $tempBotDir "core/mcp/modules"
+        $tempRtModules  = Join-Path $tempBotDir "core/runtime/modules"
+        New-Item -ItemType Directory -Force -Path $tempMcpModules | Out-Null
+        New-Item -ItemType Directory -Force -Path $tempRtModules  | Out-Null
+        Copy-Item -Path (Join-Path $botDir "core/mcp/modules/NotificationClient.psm1")     -Destination $tempMcpModules -Force
+        Copy-Item -Path (Join-Path $botDir "core/runtime/modules/SettingsLoader.psm1")     -Destination $tempRtModules  -Force
+
+        # Highest-precedence layer: notifications enabled + recipient
         @'
 {
   "instance_id": "33333333-3333-3333-3333-333333333333",
@@ -2548,9 +2554,10 @@ if (Test-Path $notifModule) {
     "poll_interval_seconds": 5
   }
 }
-'@ | Set-Content $pollerControlFile -Encoding UTF8
+'@ | Set-Content (Join-Path $tempBotDir ".control/settings.json") -Encoding UTF8
+        '{}' | Set-Content (Join-Path $tempBotDir "settings/settings.default.json") -Encoding UTF8
 
-        $pollerTaskFile = Join-Path $pollerNeedsInput "$pollerTaskId.json"
+        $pollerTaskFile = Join-Path $tempBotDir "workspace/tasks/needs-input/$pollerTaskId.json"
         @{
             id = $pollerTaskId
             name = "Approval test"
@@ -2590,17 +2597,17 @@ if (Test-Path $notifModule) {
         }
 
         $savedRoot = $global:DotbotProjectRoot
-        $global:DotbotProjectRoot = $testProject
+        $global:DotbotProjectRoot = $tempBot
         try {
             Import-Module $pollerMod -Force
-            Invoke-NotificationPollTick -BotRoot $botDir
+            Invoke-NotificationPollTick -BotRoot $tempBotDir
         } finally {
             Remove-Item -Path 'function:global:Invoke-RestMethod' -ErrorAction SilentlyContinue
             if ($script:wroteBotLogStub) { Remove-Item -Path 'function:global:Write-BotLog' -ErrorAction SilentlyContinue }
             $global:DotbotProjectRoot = $savedRoot
         }
 
-        $movedFile = Join-Path $pollerAnalysing "$pollerTaskId.json"
+        $movedFile = Join-Path $tempBotDir "workspace/tasks/analysing/$pollerTaskId.json"
         $movedExists = Test-Path $movedFile
         $resolvedQA = $null
         if ($movedExists) {
@@ -2625,14 +2632,7 @@ if (Test-Path $notifModule) {
             -Condition ($script:outFileCalled -eq $false) `
             -Message "Expected zero -OutFile calls during poll tick"
 
-        # Cleanup: remove fixture and restore .control/settings.json
-        Remove-Item -Path $pollerTaskFile -Force -ErrorAction SilentlyContinue
-        Remove-Item -Path $movedFile -Force -ErrorAction SilentlyContinue
-        if ($null -ne $pollerControlBackup) {
-            $pollerControlBackup | Set-Content $pollerControlFile -Encoding UTF8
-        } else {
-            Remove-Item -Path $pollerControlFile -Force -ErrorAction SilentlyContinue
-        }
+        Remove-Item -Path $tempBot -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     # ── Crash-mid-publish leaves no partial state in task JSON (#291 acceptance)
