@@ -187,6 +187,8 @@ function Invoke-TaskMarkNeedsInput {
                             $notificationsMap[$prop.Name] = $prop.Value
                         }
                     }
+                    $newSuccessCount = 0
+                    $lastBatchFailure = $null
                     foreach ($pq in $newPendingQuestions) {
                         $maxAttempts = 3
                         $sendResult  = $null
@@ -198,6 +200,7 @@ function Invoke-TaskMarkNeedsInput {
                             if ($attempt -lt $maxAttempts) { Start-Sleep -Milliseconds 500 }
                         }
                         if ($sendResult -and $sendResult.success) {
+                            $newSuccessCount++
                             $notificationsMap[$pq.id] = @{
                                 question_id     = $sendResult.question_id
                                 instance_id     = $sendResult.instance_id
@@ -207,11 +210,17 @@ function Invoke-TaskMarkNeedsInput {
                                 type            = $questionType
                                 attachment_refs = $uploadedAttachments
                             }
+                        } elseif ($sendResult) {
+                            $lastBatchFailure = $sendResult.reason
                         }
                     }
                     if ($notificationsMap.Count -gt 0) {
                         $taskContent | Add-Member -NotePropertyName 'notifications' -NotePropertyValue $notificationsMap -Force
                         $taskContent | ConvertTo-Json -Depth 20 | Set-Content -Path $result.file_path -Encoding UTF8
+                    }
+                    # Zero successes across the batch — surface error so attachment rollback runs.
+                    if ($newSuccessCount -eq 0) {
+                        $notificationError = if ($lastBatchFailure) { "All batch publishes failed: $lastBatchFailure" } else { "All batch publishes failed" }
                     }
                 }
 

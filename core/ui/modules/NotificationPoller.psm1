@@ -147,8 +147,6 @@ function Invoke-NotificationPollTick {
                     }
                 } else {
                     # Question response: parse typed fields (metadata only, no eager download)
-                    $taskId    = $taskContent.id
-                    $questionId = $taskContent.pending_question.id
                     $notifType = if ($notification.PSObject.Properties['type'] -and $notification.type) { "$($notification.type)" } else { 'singleChoice' }
                     $typed = ConvertTo-TypedResponse -Response $response -Type $notifType
 

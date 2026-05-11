@@ -2474,7 +2474,9 @@ if (Test-Path $notifModule) {
     # Send-AttachmentUpload/Remove-Attachment globally — module-internal calls
     # in Invoke-AttachmentBatchUpload resolve via module scope and would bypass
     # any global function override.
-    $tmpAttDir = Join-Path ([System.IO.Path]::GetTempPath()) ("dotbot-att-test-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+    # Files must live under $global:DotbotProjectRoot (= $testProject) so
+    # path-traversal guard in Send-AttachmentUpload doesn't reject them.
+    $tmpAttDir = Join-Path $testProject (".attachments-test-" + [guid]::NewGuid().ToString('N').Substring(0,8))
     New-Item -ItemType Directory -Force -Path $tmpAttDir | Out-Null
     $f1 = Join-Path $tmpAttDir 'a.txt'; Set-Content -Path $f1 -Value 'aaa' -Encoding UTF8
     $f2 = Join-Path $tmpAttDir 'b.txt'; Set-Content -Path $f2 -Value 'bbb' -Encoding UTF8
@@ -2516,6 +2518,45 @@ if (Test-Path $notifModule) {
     Assert-True -Name "Invoke-AttachmentBatchUpload rolls back prior uploads via DELETE" `
         -Condition (@($script:deletedRefs).Count -eq 2 -and $script:deletedRefs -contains 'sref-1' -and $script:deletedRefs -contains 'sref-2') `
         -Message "Expected 2 DELETE calls (sref-1, sref-2), got: $(@($script:deletedRefs) -join ', ')"
+    # Failure return surfaces the rolled-back storage_refs
+    Assert-True -Name "Invoke-AttachmentBatchUpload failure surfaces rolled-back refs in 'uploaded'" `
+        -Condition (@($batchFail.uploaded).Count -eq 2 -and $batchFail.uploaded -contains 'sref-1' -and $batchFail.uploaded -contains 'sref-2') `
+        -Message "Expected uploaded=[sref-1, sref-2], got: $(@($batchFail.uploaded) -join ', ')"
+
+    # Send-AttachmentUpload rejects paths outside project root (security boundary)
+    $savedRootForPath = $global:DotbotProjectRoot
+    $pathTestRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dotbot-path-guard-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+    New-Item -ItemType Directory -Force -Path $pathTestRoot | Out-Null
+    $insideFile  = Join-Path $pathTestRoot 'inside.txt'
+    Set-Content -Path $insideFile -Value 'inside' -Encoding UTF8
+    $outsideDir  = Join-Path ([System.IO.Path]::GetTempPath()) ("dotbot-path-guard-outside-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+    New-Item -ItemType Directory -Force -Path $outsideDir | Out-Null
+    $outsideFile = Join-Path $outsideDir 'outside.txt'
+    Set-Content -Path $outsideFile -Value 'outside' -Encoding UTF8
+    $global:DotbotProjectRoot = $pathTestRoot
+    try {
+        $outsideResult = Send-AttachmentUpload -Settings $enabledSettings -FilePath $outsideFile -Description 'evil'
+        Assert-True -Name "Send-AttachmentUpload rejects path outside project root" `
+            -Condition ($outsideResult.success -eq $false -and $outsideResult.reason -match 'outside project root') `
+            -Message "Expected outside-root rejection, got: $($outsideResult | ConvertTo-Json -Compress)"
+    } finally {
+        $global:DotbotProjectRoot = $savedRootForPath
+        Remove-Item -Path $pathTestRoot -Recurse -Force -ErrorAction SilentlyContinue
+        Remove-Item -Path $outsideDir   -Recurse -Force -ErrorAction SilentlyContinue
+    }
+
+    # ConvertTo-TypedResponse skips attachments without identifier
+    $missingRefResp = [PSCustomObject]@{
+        approvalDecision = 'approved'
+        attachments      = @(
+            [PSCustomObject]@{ name = 'ok.pdf';  sizeBytes = 100; storageRef = 'sref-good' }
+            [PSCustomObject]@{ name = 'bad.pdf'; sizeBytes = 200 }  # no storageRef / storage_ref / blobPath
+        )
+    }
+    $typedSkip = ConvertTo-TypedResponse -Response $missingRefResp -Type 'approval'
+    Assert-True -Name "ConvertTo-TypedResponse skips attachments without identifier" `
+        -Condition ($typedSkip.attachment_refs -and @($typedSkip.attachment_refs).Count -eq 1 -and $typedSkip.attachment_refs[0].storage_ref -eq 'sref-good') `
+        -Message "Expected single valid ref, got: $(@($typedSkip.attachment_refs) | ConvertTo-Json -Compress)"
 
     # ── Poller persists typed-response fields without eager-download ─
     # Use an isolated temp .bot to avoid contaminating the shared layer-2
@@ -2676,8 +2717,9 @@ if (Test-Path $notifModule) {
 }
 '@ | Set-Content $controlSettingsFile -Encoding UTF8
 
-        # Stage attachment files
-        $crashAttDir = Join-Path ([System.IO.Path]::GetTempPath()) ("dotbot-crash-att-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+        # Stage attachment files under $testProject so path-traversal guard
+        # in Send-AttachmentUpload accepts them ($global:DotbotProjectRoot = $testProject below).
+        $crashAttDir = Join-Path $testProject (".crash-att-" + [guid]::NewGuid().ToString('N').Substring(0,8))
         New-Item -ItemType Directory -Force -Path $crashAttDir | Out-Null
         $cf1 = Join-Path $crashAttDir 'doc1.txt'; Set-Content -Path $cf1 -Value 'one' -Encoding UTF8
         $cf2 = Join-Path $crashAttDir 'doc2.txt'; Set-Content -Path $cf2 -Value 'two' -Encoding UTF8
@@ -2855,6 +2897,25 @@ if ((Test-Path $mniMeta) -and (Test-Path $aqMeta)) {
             Assert-True -Name "task-answer-question rejects unknown type" `
                 -Condition ($threw -and $msg -match "Invalid 'type'") `
                 -Message "Expected throw on bogus type, got: $msg"
+
+            # Cross-field validation: incompatible-field combinations
+            $threw = $false; $msg = ""
+            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='freeText'; answer='ok'; decision='approved' } } catch { $threw = $true; $msg = $_.Exception.Message }
+            Assert-True -Name "task-answer-question rejects 'decision' on freeText type" `
+                -Condition ($threw -and $msg -match "'decision' is only valid") `
+                -Message "Expected throw, got: $msg"
+
+            $threw = $false; $msg = ""
+            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='singleChoice'; answer='A'; comment='nope' } } catch { $threw = $true; $msg = $_.Exception.Message }
+            Assert-True -Name "task-answer-question rejects 'comment' on singleChoice type" `
+                -Condition ($threw -and $msg -match "'comment' is only valid") `
+                -Message "Expected throw, got: $msg"
+
+            $threw = $false; $msg = ""
+            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; decision='approved'; ranked_items=@('a','b') } } catch { $threw = $true; $msg = $_.Exception.Message }
+            Assert-True -Name "task-answer-question rejects 'ranked_items' on approval type" `
+                -Condition ($threw -and $msg -match "'ranked_items' is only valid") `
+                -Message "Expected throw, got: $msg"
         } finally {
             Remove-Item -Path $global:DotbotProjectRoot -Recurse -Force -ErrorAction SilentlyContinue
             $global:DotbotProjectRoot = $savedRoot

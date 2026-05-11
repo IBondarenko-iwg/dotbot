@@ -603,6 +603,22 @@ function Send-AttachmentUpload {
         return @{ success = $false; reason = "File not found: $FilePath" }
     }
 
+    # Path-traversal guard: MCP tools are driven by untrusted LLM input. Reject
+    # any FilePath that resolves outside the project root to prevent exfiltration
+    # of arbitrary host files
+    $projectRoot = if ($global:DotbotProjectRoot) { "$($global:DotbotProjectRoot)" } else { $null }
+    if ($projectRoot) {
+        try {
+            $resolvedFile = [System.IO.Path]::GetFullPath($FilePath)
+            $resolvedRoot = [System.IO.Path]::GetFullPath($projectRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
+            if (-not $resolvedFile.StartsWith($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+                return @{ success = $false; reason = "FilePath outside project root: $FilePath" }
+            }
+        } catch {
+            return @{ success = $false; reason = "Invalid file path: $FilePath" }
+        }
+    }
+
     $baseUrl = $Settings.server_url.TrimEnd('/')
     $headers = @{ "X-Api-Key" = $Settings.api_key }
     $uploadUrl = "$baseUrl/api/attachments"
@@ -701,14 +717,17 @@ function Invoke-AttachmentBatchUpload {
 
         $result = Send-AttachmentUpload -Settings $Settings -FilePath $path -Description $desc
         if (-not $result.success) {
-            # Roll back prior uploads
+            # Roll back prior uploads; return the refs we tried to clean up so
+            # callers/tests can introspect what was reverted (matches docstring).
+            $rolled = @()
             foreach ($prior in $uploaded) {
                 $null = Remove-Attachment -Settings $Settings -StorageRef $prior.storage_ref
+                $rolled += $prior.storage_ref
             }
             return @{
                 success  = $false
                 reason   = $result.reason
-                uploaded = @()
+                uploaded = $rolled
             }
         }
         $uploaded += @{
@@ -762,6 +781,9 @@ function ConvertTo-TypedResponse {
                    elseif ($att.PSObject.Properties['storage_ref']) { "$($att.storage_ref)" }
                    elseif ($att.PSObject.Properties['blobPath']) { "$($att.blobPath)" }
                    else { $null }
+            # Skip attachments without an identifier — a storage_ref=$null entry
+            # would confuse downstream readers (UI persists unusable metadata).
+            if (-not $ref) { continue }
             $size = if ($att.PSObject.Properties['sizeBytes']) { [int64]$att.sizeBytes }
                     elseif ($att.PSObject.Properties['size_bytes']) { [int64]$att.size_bytes }
                     else { 0 }

@@ -72,6 +72,21 @@ function Invoke-TaskAnswerQuestion {
         }
     }
 
+    # Cross-field validation: reject mutually-incompatible fields so callers
+    # can't smuggle approval semantics into a freeText/singleChoice answer
+    # (which would produce inconsistent questions_resolved entries).
+    if ($questionType) {
+        if ($decision -and $questionType -notin @('approval', 'documentReview')) {
+            throw "'decision' is only valid for type 'approval' or 'documentReview', got type='$questionType'"
+        }
+        if ($comment -and $questionType -notin @('approval', 'documentReview')) {
+            throw "'comment' is only valid for type 'approval' or 'documentReview', got type='$questionType'"
+        }
+        if ($rankedItems -and $questionType -ne 'priorityRanking') {
+            throw "'ranked_items' is only valid for type 'priorityRanking', got type='$questionType'"
+        }
+    }
+
     # Synthesize an answer string for non-question types so downstream
     # status-transition logic (skip detection, summary text) keeps working.
     if (-not $answer) {
