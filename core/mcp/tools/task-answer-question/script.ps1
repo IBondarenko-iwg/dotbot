@@ -74,17 +74,18 @@ function Invoke-TaskAnswerQuestion {
 
     # Cross-field validation: reject mutually-incompatible fields so callers
     # can't smuggle approval semantics into a freeText/singleChoice answer
-    # (which would produce inconsistent questions_resolved entries).
-    if ($questionType) {
-        if ($decision -and $questionType -notin @('approval', 'documentReview')) {
-            throw "'decision' is only valid for type 'approval' or 'documentReview', got type='$questionType'"
-        }
-        if ($comment -and $questionType -notin @('approval', 'documentReview')) {
-            throw "'comment' is only valid for type 'approval' or 'documentReview', got type='$questionType'"
-        }
-        if ($rankedItems -and $questionType -ne 'priorityRanking') {
-            throw "'ranked_items' is only valid for type 'priorityRanking', got type='$questionType'"
-        }
+    # (would produce inconsistent questions_resolved entries). Runs even when
+    # 'type' is omitted — legacy callers default to singleChoice for this check
+    # so decision/comment/ranked_items can't sneak in alongside a plain answer.
+    $effectiveType = if ($questionType) { $questionType } else { 'singleChoice' }
+    if ($decision -and $effectiveType -notin @('approval', 'documentReview')) {
+        throw "'decision' is only valid for type 'approval' or 'documentReview', got type='$effectiveType'"
+    }
+    if ($comment -and $effectiveType -notin @('approval', 'documentReview')) {
+        throw "'comment' is only valid for type 'approval' or 'documentReview', got type='$effectiveType'"
+    }
+    if ($rankedItems -and $effectiveType -ne 'priorityRanking') {
+        throw "'ranked_items' is only valid for type 'priorityRanking', got type='$effectiveType'"
     }
 
     # Synthesize an answer string for non-question types so downstream

@@ -150,7 +150,8 @@ function Invoke-TaskMarkNeedsInput {
                 if ($attachmentsArg -and @($attachmentsArg).Count -gt 0 -and -not $splitProposal) {
                     $batchResult = Invoke-AttachmentBatchUpload -Settings $settings -Attachments $attachmentsArg
                     if (-not $batchResult.success) {
-                        $notificationError = "Attachment upload failed: $($batchResult.reason)"
+                        # Reason already namespaces its own failure
+                        $notificationError = $batchResult.reason
                     } else {
                         $uploadedAttachments = $batchResult.uploads
                     }

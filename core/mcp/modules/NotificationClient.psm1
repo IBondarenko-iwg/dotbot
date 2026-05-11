@@ -272,14 +272,18 @@ function Send-TaskNotification {
     Optional 1-3 line summary shown in channel notifications (PRD §5.2).
 
     .PARAMETER Attachments
-    Optional array of pre-uploaded attachment metadata
-    (@{ name; description; storage_ref; size_bytes }) returned by
-    Invoke-AttachmentBatchUpload. Emitted on the template payload as camelCase
-    `attachments` with `storageRef` (PRD §5.2 wire shape).
+    Optional array of pre-uploaded attachment metadata returned by
+    Invoke-AttachmentBatchUpload (@{ name; description; attachment_id;
+    storage_ref; size_bytes }). Emitted on the template payload as
+    `attachments[*] = { attachmentId, blobPath = storage_ref, name, sizeBytes }`
+    matching server `QuestionAttachment` (Models/QuestionAttachment.cs).
+    `storageRef`/`description` are client-side keys and not part of the wire shape.
 
     .PARAMETER ReviewLinks
-    Optional array of @{ title; url; type } for reviewer context. Emitted as
-    template payload `reviewLinks`.
+    Optional array of @{ title; url; type } for reviewer context. Emitted on
+    the template payload as `referenceLinks[*] = { label, url }` matching server
+    `ReferenceLink` (Models/ReferenceLink.cs). `title` → `label`; `type` has no
+    server counterpart and is dropped at the wire boundary.
 
     .OUTPUTS
     Hashtable. On success: @{ success = $true; question_id; instance_id; channel; project_id }.
@@ -685,10 +689,11 @@ function Remove-Attachment {
     $baseUrl = $Settings.server_url.TrimEnd('/')
     $headers = @{ "X-Api-Key" = $Settings.api_key }
     # storageRef is `{guid}/{filename}`. Server route is `{**storageRef}` catch-all and
-    # expects literal `/` separators. EscapeUriString preserves `/` while encoding any
-    # other special chars in the filename. EscapeDataString would percent-encode `/` and
-    # cause a 404 — same pattern Resolve-NotificationAnswer uses for downloads.
-    $encoded = [System.Uri]::EscapeUriString($StorageRef)
+    # expects literal `/` separators. Segment-encode (split on `/`, EscapeDataString
+    # each segment, rejoin) so `/` stays literal while `#`, `?`, spaces, and other
+    # reserved chars in filenames get percent-encoded — EscapeUriString alone leaves
+    # `#`/`?` unencoded and would truncate the request URI.
+    $encoded = ($StorageRef -split '/' | ForEach-Object { [System.Uri]::EscapeDataString($_) }) -join '/'
     $url = "$baseUrl/api/attachments/$encoded"
 
     try {

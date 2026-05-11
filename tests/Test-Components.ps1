@@ -2615,7 +2615,7 @@ if (Test-Path $notifModule) {
         -Condition (-not $tplCapture.referenceLinks[0].PSObject.Properties['type']) `
         -Message "Expected no type field"
 
-    # ── Round-2 Copilot fix C: Linux-only case-sensitivity guard ────────
+    # ── Linux-only case-sensitivity guard ────────
     if ($IsLinux) {
         $caseRoot = Join-Path '/tmp' ("dotbot-case-" + [guid]::NewGuid().ToString('N').Substring(0,8) + 'a')
         New-Item -ItemType Directory -Force -Path $caseRoot | Out-Null
@@ -2635,7 +2635,7 @@ if (Test-Path $notifModule) {
         }
     }
 
-    # ── Round-2 Copilot fix D: Remove-Attachment preserves '/' in URL ────
+    # ── Remove-Attachment preserves '/' in URL ────
     $script:capturedDeleteUri = $null
     function global:Invoke-RestMethod {
         param([string]$Uri, [string]$Method = 'Get', $Body, $Headers, $ContentType, $TimeoutSec, $Form, $OutFile, $ErrorAction)
@@ -2650,6 +2650,22 @@ if (Test-Path $notifModule) {
     Assert-True -Name "Remove-Attachment preserves '/' separator in DELETE URI (no %2F)" `
         -Condition ($script:capturedDeleteUri -match '/api/attachments/guid-x/attach\.txt$' -and $script:capturedDeleteUri -notmatch '%2F') `
         -Message "Expected literal slash, got: $script:capturedDeleteUri"
+
+    # Segment-encode escapes # and ? in filename while keeping / literal
+    $script:capturedDeleteUri = $null
+    function global:Invoke-RestMethod {
+        param([string]$Uri, [string]$Method = 'Get', $Body, $Headers, $ContentType, $TimeoutSec, $Form, $OutFile, $ErrorAction)
+        if ($Method -eq 'Delete') { $script:capturedDeleteUri = $Uri; return @{} }
+        throw "Unexpected: $Method $Uri"
+    }
+    try {
+        $null = Remove-Attachment -Settings $enabledSettings -StorageRef 'guid-x/has#hash?q.txt'
+    } finally {
+        Remove-Item -Path 'function:global:Invoke-RestMethod' -ErrorAction SilentlyContinue
+    }
+    Assert-True -Name "Remove-Attachment encodes '#' and '?' in filename (Fix H)" `
+        -Condition ($script:capturedDeleteUri -match '/api/attachments/guid-x/has%23hash%3Fq\.txt$') `
+        -Message "Expected has%23hash%3Fq.txt segment, got: $script:capturedDeleteUri"
 
     # ── Poller persists typed-response fields without eager-download ─
     # Use an isolated temp .bot to avoid contaminating the shared layer-2
@@ -3009,6 +3025,19 @@ if ((Test-Path $mniMeta) -and (Test-Path $aqMeta)) {
             Assert-True -Name "task-answer-question rejects 'ranked_items' on approval type" `
                 -Condition ($threw -and $msg -match "'ranked_items' is only valid") `
                 -Message "Expected throw, got: $msg"
+
+            # Cross-field validation must also fire when 'type' is omitted (legacy callers)
+            $threw = $false; $msg = ""
+            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; answer='A'; decision='approved' } } catch { $threw = $true; $msg = $_.Exception.Message }
+            Assert-True -Name "task-answer-question rejects 'decision' when type is omitted (legacy)" `
+                -Condition ($threw -and $msg -match "'decision' is only valid") `
+                -Message "Expected throw on legacy caller smuggling decision, got: $msg"
+
+            $threw = $false; $msg = ""
+            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; answer='B'; ranked_items=@('a','b') } } catch { $threw = $true; $msg = $_.Exception.Message }
+            Assert-True -Name "task-answer-question rejects 'ranked_items' when type is omitted (legacy)" `
+                -Condition ($threw -and $msg -match "'ranked_items' is only valid") `
+                -Message "Expected throw on legacy caller smuggling ranked_items, got: $msg"
         } finally {
             Remove-Item -Path $global:DotbotProjectRoot -Recurse -Force -ErrorAction SilentlyContinue
             $global:DotbotProjectRoot = $savedRoot
