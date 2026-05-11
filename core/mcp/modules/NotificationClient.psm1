@@ -328,29 +328,33 @@ function Send-TaskNotification {
     }
 
     if ($Attachments -and @($Attachments).Count -gt 0) {
+        # Wire shape matches server QuestionAttachment (Models/QuestionAttachment.cs):
+        # required attachmentId + name, exactly one of url/blobPath (we emit blobPath = storageRef).
+        # storage_ref/description are client-side keys; not part of the server schema.
         $template['attachments'] = @(foreach ($att in @($Attachments)) {
-            $ref = if ($att -is [hashtable]) { $att['storage_ref'] } else { $att.storage_ref }
-            $name = if ($att -is [hashtable]) { $att['name'] } else { $att.name }
-            $size = if ($att -is [hashtable]) { $att['size_bytes'] } else { $att.size_bytes }
-            $desc = if ($att -is [hashtable]) { $att['description'] } else { $att.description }
+            $aid  = if ($att -is [hashtable]) { $att['attachment_id'] } else { $att.attachment_id }
+            $ref  = if ($att -is [hashtable]) { $att['storage_ref']   } else { $att.storage_ref }
+            $name = if ($att -is [hashtable]) { $att['name'] }          else { $att.name }
+            $size = if ($att -is [hashtable]) { $att['size_bytes'] }    else { $att.size_bytes }
             @{
-                storageRef  = "$ref"
-                name        = "$name"
-                sizeBytes   = [int64]$size
-                description = if ($desc) { "$desc" } else { "" }
+                attachmentId = "$aid"
+                name         = "$name"
+                blobPath     = "$ref"
+                sizeBytes    = [int64]$size
             }
         })
     }
 
     if ($ReviewLinks -and @($ReviewLinks).Count -gt 0) {
-        $template['reviewLinks'] = @(foreach ($link in @($ReviewLinks)) {
+        # Wire shape matches server ReferenceLink (Models/ReferenceLink.cs): { label, url }.
+        # MCP input still uses review_links/{title,url,type} per PRD §4.6; type has no server
+        # counterpart and is dropped at this wire boundary.
+        $template['referenceLinks'] = @(foreach ($link in @($ReviewLinks)) {
             $title = if ($link -is [hashtable]) { $link['title'] } else { $link.title }
             $url   = if ($link -is [hashtable]) { $link['url']   } else { $link.url   }
-            $type  = if ($link -is [hashtable]) { $link['type']  } else { $link.type  }
             @{
-                title = "$title"
+                label = "$title"
                 url   = "$url"
-                type  = if ($type) { "$type" } else { "other" }
             }
         })
     }
@@ -611,7 +615,9 @@ function Send-AttachmentUpload {
         try {
             $resolvedFile = [System.IO.Path]::GetFullPath($FilePath)
             $resolvedRoot = [System.IO.Path]::GetFullPath($projectRoot).TrimEnd([System.IO.Path]::DirectorySeparatorChar) + [System.IO.Path]::DirectorySeparatorChar
-            if (-not $resolvedFile.StartsWith($resolvedRoot, [System.StringComparison]::OrdinalIgnoreCase)) {
+            # Linux paths are case-sensitive; Windows/macOS default to case-insensitive comparison.
+            $pathCmp = if ($IsLinux) { [System.StringComparison]::Ordinal } else { [System.StringComparison]::OrdinalIgnoreCase }
+            if (-not $resolvedFile.StartsWith($resolvedRoot, $pathCmp)) {
                 return @{ success = $false; reason = "FilePath outside project root: $FilePath" }
             }
         } catch {
@@ -638,15 +644,22 @@ function Send-AttachmentUpload {
         if (-not $storageRef) {
             return @{ success = $false; reason = "Server response missing storageRef" }
         }
+        $attachmentId = if ($resp.attachmentId) { "$($resp.attachmentId)" }
+                        elseif ($resp.attachment_id) { "$($resp.attachment_id)" }
+                        else { $null }
+        if (-not $attachmentId) {
+            return @{ success = $false; reason = "Server response missing attachmentId" }
+        }
         $sizeBytes = if ($resp.sizeBytes) { [int64]$resp.sizeBytes }
                      elseif ($resp.size_bytes) { [int64]$resp.size_bytes }
                      else { [int64]$fileItem.Length }
         return @{
-            success     = $true
-            storage_ref = $storageRef
-            size_bytes  = $sizeBytes
-            name        = $fileItem.Name
-            description = $Description
+            success       = $true
+            attachment_id = $attachmentId
+            storage_ref   = $storageRef
+            size_bytes    = $sizeBytes
+            name          = $fileItem.Name
+            description   = $Description
         }
     } catch {
         return @{ success = $false; reason = "Attachment upload failed: $($_.Exception.Message)" }
@@ -671,7 +684,11 @@ function Remove-Attachment {
 
     $baseUrl = $Settings.server_url.TrimEnd('/')
     $headers = @{ "X-Api-Key" = $Settings.api_key }
-    $encoded = [System.Uri]::EscapeDataString($StorageRef)
+    # storageRef is `{guid}/{filename}`. Server route is `{**storageRef}` catch-all and
+    # expects literal `/` separators. EscapeUriString preserves `/` while encoding any
+    # other special chars in the filename. EscapeDataString would percent-encode `/` and
+    # cause a 404 — same pattern Resolve-NotificationAnswer uses for downloads.
+    $encoded = [System.Uri]::EscapeUriString($StorageRef)
     $url = "$baseUrl/api/attachments/$encoded"
 
     try {
@@ -731,10 +748,11 @@ function Invoke-AttachmentBatchUpload {
             }
         }
         $uploaded += @{
-            name        = $result.name
-            description = $result.description
-            storage_ref = $result.storage_ref
-            size_bytes  = $result.size_bytes
+            name          = $result.name
+            description   = $result.description
+            attachment_id = $result.attachment_id
+            storage_ref   = $result.storage_ref
+            size_bytes    = $result.size_bytes
         }
     }
 

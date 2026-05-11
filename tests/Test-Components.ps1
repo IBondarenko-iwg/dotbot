@@ -2497,7 +2497,7 @@ if (Test-Path $notifModule) {
         if ($Uri -match '/api/attachments$' -and $Method -eq 'Post') {
             $script:postCount++
             if ($script:postCount -le 2) {
-                return @{ storageRef = "sref-$($script:postCount)"; sizeBytes = 3 }
+                return @{ attachmentId = "aid-$($script:postCount)"; storageRef = "sref-$($script:postCount)"; sizeBytes = 3 }
             }
             throw "simulated failure"
         }
@@ -2557,6 +2557,99 @@ if (Test-Path $notifModule) {
     Assert-True -Name "ConvertTo-TypedResponse skips attachments without identifier" `
         -Condition ($typedSkip.attachment_refs -and @($typedSkip.attachment_refs).Count -eq 1 -and $typedSkip.attachment_refs[0].storage_ref -eq 'sref-good') `
         -Message "Expected single valid ref, got: $(@($typedSkip.attachment_refs) | ConvertTo-Json -Compress)"
+
+    # ── Server-schema wire shape (A + B) ────────
+    # A: Send-AttachmentUpload captures attachmentId; template emits
+    #    {attachmentId, name, blobPath, sizeBytes} (no storageRef/description).
+    # B: Template emits referenceLinks (not reviewLinks) with {label, url} (no type).
+    $tplCapture = $null
+    $uploadAttRoot = Join-Path $testProject (".att-wire-" + [guid]::NewGuid().ToString('N').Substring(0,8))
+    New-Item -ItemType Directory -Force -Path $uploadAttRoot | Out-Null
+    $wireFile = Join-Path $uploadAttRoot 'attach.txt'
+    Set-Content -Path $wireFile -Value 'wire-test' -Encoding UTF8
+
+    function global:Invoke-RestMethod {
+        param([string]$Uri, [string]$Method = 'Get', $Body, $Headers, $ContentType, $TimeoutSec, $Form, $OutFile, $ErrorAction)
+        if ($Uri -match '/api/attachments$' -and $Method -eq 'Post') {
+            return @{ attachmentId = '00000000-0000-0000-0000-000000000aaa'; storageRef = 'guid-x/attach.txt'; sizeBytes = 9; name = 'attach.txt'; contentType = 'text/plain' }
+        }
+        if ($Uri -match '/api/templates$' -and $Method -eq 'Post') {
+            $global:templateCapture = $Body | ConvertFrom-Json
+            return @{}
+        }
+        if ($Uri -match '/api/instances$' -and $Method -eq 'Post') { return @{} }
+        throw "Unexpected URI: $Method $Uri"
+    }
+    try {
+        $upload = Send-AttachmentUpload -Settings $enabledSettings -FilePath $wireFile -Description 'desc'
+        Assert-True -Name "Send-AttachmentUpload captures attachment_id from server response" `
+            -Condition ($upload.success -and $upload.attachment_id -eq '00000000-0000-0000-0000-000000000aaa') `
+            -Message "Expected attachment_id='...0aaa', got: $($upload | ConvertTo-Json -Compress)"
+
+        $taskWire = [PSCustomObject]@{ id = 'task-wire-1'; name = 'Wire test' }
+        $qWire = [PSCustomObject]@{
+            id = 'q1'; question = 'Approve?'; options = @([PSCustomObject]@{ key = 'A'; label = 'Yes' }); recommendation = 'A'
+        }
+        $atts = @(@{ attachment_id = '00000000-0000-0000-0000-000000000aaa'; storage_ref = 'guid-x/attach.txt'; name = 'attach.txt'; size_bytes = 9; description = 'desc' })
+        $links = @(@{ title = 'Spec'; url = 'https://example.com/spec'; type = 'document' })
+        $null = Send-TaskNotification -TaskContent $taskWire -PendingQuestion $qWire -Settings $enabledSettings `
+            -Type 'approval' -DeliverableSummary 'short' -Attachments $atts -ReviewLinks $links
+    } finally {
+        Remove-Item -Path 'function:global:Invoke-RestMethod' -ErrorAction SilentlyContinue
+        Remove-Item -Path $uploadAttRoot -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    $tplCapture = $global:templateCapture
+    Assert-True -Name "Template attachments[0] has attachmentId + blobPath (server schema)" `
+        -Condition ($tplCapture.attachments[0].attachmentId -eq '00000000-0000-0000-0000-000000000aaa' -and $tplCapture.attachments[0].blobPath -eq 'guid-x/attach.txt') `
+        -Message "Expected attachmentId + blobPath, got: $($tplCapture.attachments[0] | ConvertTo-Json -Compress)"
+    Assert-True -Name "Template attachments[0] omits storageRef/description (server has no counterpart)" `
+        -Condition (-not $tplCapture.attachments[0].PSObject.Properties['storageRef'] -and -not $tplCapture.attachments[0].PSObject.Properties['description']) `
+        -Message "Expected no storageRef/description keys"
+    Assert-True -Name "Template emits referenceLinks (not reviewLinks)" `
+        -Condition ($tplCapture.PSObject.Properties['referenceLinks'] -and -not $tplCapture.PSObject.Properties['reviewLinks']) `
+        -Message "Expected referenceLinks key, no reviewLinks"
+    Assert-True -Name "Template referenceLinks[0] has label (mapped from title)" `
+        -Condition ($tplCapture.referenceLinks[0].label -eq 'Spec' -and $tplCapture.referenceLinks[0].url -eq 'https://example.com/spec') `
+        -Message "Expected {label:Spec, url:...}, got: $($tplCapture.referenceLinks[0] | ConvertTo-Json -Compress)"
+    Assert-True -Name "Template referenceLinks[0] omits 'type' (no server field)" `
+        -Condition (-not $tplCapture.referenceLinks[0].PSObject.Properties['type']) `
+        -Message "Expected no type field"
+
+    # ── Round-2 Copilot fix C: Linux-only case-sensitivity guard ────────
+    if ($IsLinux) {
+        $caseRoot = Join-Path '/tmp' ("dotbot-case-" + [guid]::NewGuid().ToString('N').Substring(0,8) + 'a')
+        New-Item -ItemType Directory -Force -Path $caseRoot | Out-Null
+        $insideCase = Join-Path $caseRoot 'inside.txt'
+        Set-Content -Path $insideCase -Value 'x' -Encoding UTF8
+        $caseVariantPath = $insideCase -replace 'a/inside\.txt$', 'A/inside.txt'   # flip last char of root
+        $savedRootCase = $global:DotbotProjectRoot
+        $global:DotbotProjectRoot = $caseRoot
+        try {
+            $caseRes = Send-AttachmentUpload -Settings $enabledSettings -FilePath $caseVariantPath -Description ''
+            Assert-True -Name "Send-AttachmentUpload rejects case-variant path on Linux (case-sensitive FS)" `
+                -Condition ($caseRes.success -eq $false) `
+                -Message "Expected rejection on Linux, got: $($caseRes | ConvertTo-Json -Compress)"
+        } finally {
+            $global:DotbotProjectRoot = $savedRootCase
+            Remove-Item -Path $caseRoot -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    # ── Round-2 Copilot fix D: Remove-Attachment preserves '/' in URL ────
+    $script:capturedDeleteUri = $null
+    function global:Invoke-RestMethod {
+        param([string]$Uri, [string]$Method = 'Get', $Body, $Headers, $ContentType, $TimeoutSec, $Form, $OutFile, $ErrorAction)
+        if ($Method -eq 'Delete') { $script:capturedDeleteUri = $Uri; return @{} }
+        throw "Unexpected: $Method $Uri"
+    }
+    try {
+        $null = Remove-Attachment -Settings $enabledSettings -StorageRef 'guid-x/attach.txt'
+    } finally {
+        Remove-Item -Path 'function:global:Invoke-RestMethod' -ErrorAction SilentlyContinue
+    }
+    Assert-True -Name "Remove-Attachment preserves '/' separator in DELETE URI (no %2F)" `
+        -Condition ($script:capturedDeleteUri -match '/api/attachments/guid-x/attach\.txt$' -and $script:capturedDeleteUri -notmatch '%2F') `
+        -Message "Expected literal slash, got: $script:capturedDeleteUri"
 
     # ── Poller persists typed-response fields without eager-download ─
     # Use an isolated temp .bot to avoid contaminating the shared layer-2
@@ -2730,7 +2823,7 @@ if (Test-Path $notifModule) {
             param([string]$Uri, [string]$Method = 'Get', $Body, $Headers, $ContentType, $TimeoutSec, $Form, $OutFile, $ErrorAction)
             if ($Uri -match '/api/attachments$' -and $Method -eq 'Post') {
                 $script:crashUploadCount++
-                return @{ storageRef = "crash-sref-$($script:crashUploadCount)"; sizeBytes = 3 }
+                return @{ attachmentId = "crash-aid-$($script:crashUploadCount)"; storageRef = "crash-sref-$($script:crashUploadCount)"; sizeBytes = 3 }
             }
             if ($Uri -match '/api/attachments/(.+)$' -and $Method -eq 'Delete') {
                 $script:crashDeletedRefs += $matches[1]

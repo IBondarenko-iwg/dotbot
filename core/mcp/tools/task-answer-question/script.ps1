@@ -230,7 +230,7 @@ function Invoke-TaskAnswerQuestion {
                 new_status                = 'needs-input'
                 question                  = $targetQuestion.question
                 answer                    = $resolvedAnswer
-                answer_type               = $answerType
+                answer_type               = if ($questionType) { $questionType } else { $answerType }
                 questions_resolved_count  = $taskContent.questions_resolved.Count
                 questions_remaining_count = $remaining.Count
                 file_path                 = $taskFile.FullName
@@ -293,7 +293,7 @@ function Invoke-TaskAnswerQuestion {
             new_status               = $newStatus
             question                 = $targetQuestion.question
             answer                   = $resolvedAnswer
-            answer_type              = $answerType
+            answer_type              = if ($questionType) { $questionType } else { $answerType }
             attachments_count        = if ($attachments) { @($attachments).Count } else { 0 }
             questions_resolved_count = $taskContent.questions_resolved.Count
             file_path                = $newFilePath
@@ -446,7 +446,7 @@ function Invoke-TaskAnswerQuestion {
         new_status = $newStatus
         question = $pendingQuestion.question
         answer = $resolvedAnswer
-        answer_type = $answerType
+        answer_type = if ($questionType) { $questionType } else { $answerType }
         attachments_count = if ($attachments) { @($attachments).Count } else { 0 }
         questions_resolved_count = $taskContent.questions_resolved.Count
         file_path = $newFilePath
