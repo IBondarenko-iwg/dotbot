@@ -243,7 +243,7 @@ public class RespondModel : PageModel
             AnsweredVia = "notification"
         };
 
-        await _responses.SaveResponseAsync(response);
+        var (_, _) = await _responses.SaveResponseAsync(response);
         _logger.LogInformation(
             "Web response saved: type={Type}, responder={Email}, instance={InstanceId}, decision={Decision}, key={Key}",
             template.Type, email, instanceId, response.ApprovalDecision, response.SelectedKey);

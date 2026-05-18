@@ -470,7 +470,9 @@ function Submit-TaskAnswer {
         $notifClientModule = Join-Path $script:Config.BotRoot "core/mcp/modules/NotificationClient.psm1"
         if (Test-Path $notifClientModule) {
             Import-Module $notifClientModule -DisableNameChecking -Global -Force:$false
-            $qv = if ($notificationMeta.PSObject.Properties['question_version'] -and $notificationMeta.question_version) { [int]$notificationMeta.question_version } else { 1 }
+            $qvRaw  = "$($notificationMeta.PSObject.Properties['question_version'] ? $notificationMeta.question_version : '')"
+            $qvTest = 0
+            $qv     = if ([int]::TryParse($qvRaw, [ref]$qvTest) -and $qvTest -gt 0) { $qvTest } else { 1 }
             $pushResult = Send-LocalApprovalResponse `
                 -ProjectId        "$($notificationMeta.project_id)" `
                 -QuestionId       "$($notificationMeta.question_id)" `

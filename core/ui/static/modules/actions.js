@@ -805,6 +805,9 @@ function attachActionHandlers(container) {
                     })
                 });
 
+                if (!response.ok) {
+                    throw new Error('Server error ' + response.status);
+                }
                 const result = await response.json();
 
                 if (result.success) {

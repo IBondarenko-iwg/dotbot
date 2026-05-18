@@ -2885,9 +2885,9 @@ if (Test-Path $notifModule) {
                 asked_at = "2026-05-07T00:00:00Z"
             }
             notification = @{
-                question_id = "qid-1"
-                instance_id = "iid-1"
-                project_id  = "pid-1"
+                question_id = "11111111-1111-1111-1111-111111111111"
+                instance_id = "22222222-2222-2222-2222-222222222222"
+                project_id  = "33333333-3333-3333-3333-333333333333"
                 channel     = "teams"
                 type        = "approval"
                 sent_at     = "2026-05-07T00:00:00Z"
@@ -2975,7 +2975,7 @@ if (Test-Path $notifModule) {
         @{
             id = $pollerUnknownId; name = "Unknown type test"; status = "needs-input"
             pending_question = @{ id = "q1"; question = "Q?"; options = @(@{ key = "A"; label = "Yes" }); recommendation = "A"; asked_at = "2026-05-12T00:00:00Z" }
-            notification = @{ question_id = "qid-s1"; instance_id = "iid-s1"; project_id = "pid-s1"; channel = "teams"; type = "unknown_future_type"; sent_at = "2026-05-12T00:00:00Z" }
+            notification = @{ question_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"; instance_id = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"; project_id = "cccccccc-cccc-cccc-cccc-cccccccccccc"; channel = "teams"; type = "unknown_future_type"; sent_at = "2026-05-12T00:00:00Z" }
             questions_resolved = @(); updated_at = "2026-05-12T00:00:00Z"
         } | ConvertTo-Json -Depth 20 | Set-Content (Join-Path $tempBotDirS "workspace/tasks/needs-input/$pollerUnknownId.json") -Encoding UTF8
 

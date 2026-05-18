@@ -908,6 +908,17 @@ function Get-AllTaskNotificationResponse {
     .SYNOPSIS
     Returns all stored responses for a notification instance, sorted by SubmittedAt.
     Used by the poller to detect dual-surface disagreements and read answered_via.
+
+    .PARAMETER Notification
+    The notification metadata object from task JSON. Must have project_id, question_id,
+    and instance_id properties. project_id is resolved via fallback if absent.
+
+    .PARAMETER Settings
+    Optional notification settings hashtable. If not provided, reads from Get-NotificationSettings.
+
+    .OUTPUTS
+    Array of ResponseRecordV2-shaped objects sorted ascending by submittedAt.
+    Returns @() when notifications are not configured or on any HTTP error.
     #>
     param(
         [Parameter(Mandatory)] [object]$Notification,
@@ -937,11 +948,20 @@ function Get-AllTaskNotificationResponse {
         }
     }
 
-    $url = "$baseUrl/api/instances/$projectId/$($Notification.question_id)/$($Notification.instance_id)/responses"
+    $qGuid = [guid]::Empty
+    $iGuid = [guid]::Empty
+    if (-not ([guid]::TryParse("$($Notification.question_id)", [ref]$qGuid)) -or
+        -not ([guid]::TryParse("$($Notification.instance_id)", [ref]$iGuid))) {
+        return @()
+    }
+
+    # Server returns responses sorted ascending by SubmittedAt; index 0 is the first-by-time response.
+    $url = "$baseUrl/api/instances/$projectId/$($qGuid.ToString())/$($iGuid.ToString())/responses"
     try {
-        $result = Invoke-RestMethod -Uri $url -Method Get -Headers $headers -TimeoutSec 10 -ErrorAction Stop
-        return @($result)
+        $responses = Invoke-RestMethod -Uri $url -Method Get -Headers $headers -TimeoutSec 10 -ErrorAction Stop
+        return @($responses)
     } catch {
+        # Transient error or not yet answered — caller treats empty as unanswered
         return @()
     }
 }
@@ -951,6 +971,34 @@ function Send-LocalApprovalResponse {
     .SYNOPSIS
     Pushes a locally-submitted approval decision to the Mothership via POST /api/responses.
     Uses a deterministic ResponseId so retries are idempotent (server returns 200 if already stored).
+
+    .PARAMETER ProjectId
+    The project identifier (GUID string or slug) that owns the question.
+
+    .PARAMETER QuestionId
+    The GUID string identifying the question template.
+
+    .PARAMETER InstanceId
+    The GUID string identifying the task/workflow instance.
+
+    .PARAMETER ApprovalDecision
+    The decision value: "approved", "rejected", or "abstained".
+
+    .PARAMETER Comment
+    Optional free-text comment. Required by convention when Decision = "rejected".
+
+    .PARAMETER ResponderEmail
+    Optional email of the responder. Defaults to the machine hostname for deterministic ResponseId.
+
+    .PARAMETER QuestionVersion
+    Version of the question template. Defaults to 1.
+
+    .PARAMETER Settings
+    Optional notification settings. If not provided, reads from Get-NotificationSettings.
+
+    .OUTPUTS
+    Hashtable. On success: @{ success = $true; response_id = "..."; server_result = ... }.
+    On failure: @{ success = $false; reason = "..." }.
     #>
     param(
         [Parameter(Mandatory)] [string]$ProjectId,

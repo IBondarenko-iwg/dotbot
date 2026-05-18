@@ -195,16 +195,18 @@ public class ResponseStorageService
         var path = _paths.ResponsePath(response.ProjectId, response.QuestionId, response.InstanceId, response.ResponseId);
         var blob = _container.GetBlobClient(path);
 
-        if (await blob.ExistsAsync())
+        try
+        {
+            var json = JsonSerializer.Serialize(response, JsonOptions);
+            await blob.UploadAsync(BinaryData.FromString(json), overwrite: false);
+            return (response, isNew: true);
+        }
+        catch (RequestFailedException ex) when (ex.Status == 409)
         {
             var existing = await blob.DownloadContentAsync();
             var record = JsonSerializer.Deserialize<ResponseRecordV2>(existing.Value.Content.ToString(), JsonOptions)!;
             return (record, isNew: false);
         }
-
-        var json = JsonSerializer.Serialize(response, JsonOptions);
-        await blob.UploadAsync(BinaryData.FromString(json), overwrite: false);
-        return (response, isNew: true);
     }
 
     public async IAsyncEnumerable<ResponseRecordV2> ListResponsesAsync(string projectId, Guid questionId, Guid instanceId)
