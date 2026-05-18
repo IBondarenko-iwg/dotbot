@@ -903,6 +903,108 @@ function ConvertTo-TypedResponse {
     return $out
 }
 
+function Get-AllTaskNotificationResponse {
+    <#
+    .SYNOPSIS
+    Returns all stored responses for a notification instance, sorted by SubmittedAt.
+    Used by the poller to detect dual-surface disagreements and read answered_via.
+    #>
+    param(
+        [Parameter(Mandatory)] [object]$Notification,
+        [object]$Settings = $null
+    )
+
+    if (-not $Settings) { $Settings = Get-NotificationSettings }
+
+    if (-not $Settings.enabled -or -not $Settings.server_url -or -not $Settings.api_key) {
+        return @()
+    }
+
+    $baseUrl = $Settings.server_url.TrimEnd('/')
+    $headers = @{ "X-Api-Key" = $Settings.api_key }
+
+    $projectId = $Notification.project_id
+    if (-not $projectId) {
+        if ($Settings.PSObject.Properties['instance_id'] -and $Settings.instance_id) {
+            $parsedProjectGuid = [guid]::Empty
+            if ([guid]::TryParse("$($Settings.instance_id)", [ref]$parsedProjectGuid)) {
+                $projectId = $parsedProjectGuid.ToString()
+            }
+        }
+        if (-not $projectId) {
+            $projectName = if ($Settings.project_name) { $Settings.project_name } else { "dotbot" }
+            $projectId = ($projectName.ToLowerInvariant() -replace '[^a-z0-9]+', '-').Trim('-')
+        }
+    }
+
+    $url = "$baseUrl/api/instances/$projectId/$($Notification.question_id)/$($Notification.instance_id)/responses"
+    try {
+        $result = Invoke-RestMethod -Uri $url -Method Get -Headers $headers -TimeoutSec 10 -ErrorAction Stop
+        return @($result)
+    } catch {
+        return @()
+    }
+}
+
+function Send-LocalApprovalResponse {
+    <#
+    .SYNOPSIS
+    Pushes a locally-submitted approval decision to the Mothership via POST /api/responses.
+    Uses a deterministic ResponseId so retries are idempotent (server returns 200 if already stored).
+    #>
+    param(
+        [Parameter(Mandatory)] [string]$ProjectId,
+        [Parameter(Mandatory)] [string]$QuestionId,
+        [Parameter(Mandatory)] [string]$InstanceId,
+        [Parameter(Mandatory)] [string]$ApprovalDecision,   # "approved" | "rejected" | "abstained"
+        [string]$Comment         = $null,
+        [string]$ResponderEmail  = $null,
+        [object]$Settings        = $null
+    )
+
+    if (-not $Settings) { $Settings = Get-NotificationSettings }
+
+    if (-not $Settings.enabled -or -not $Settings.server_url -or -not $Settings.api_key) {
+        return @{ success = $false; reason = "Notifications not configured" }
+    }
+
+    $baseUrl = $Settings.server_url.TrimEnd('/')
+    $headers = @{ "X-Api-Key" = $Settings.api_key }
+
+    # Deterministic ResponseId — same inputs always yield same GUID so retries are no-ops on server
+    $keyInput  = "$InstanceId`:$QuestionId`:$($ResponderEmail ?? $env:COMPUTERNAME)"
+    $keyBytes  = [System.Text.Encoding]::UTF8.GetBytes($keyInput)
+    $sha1      = [System.Security.Cryptography.SHA1]::Create()
+    try { $hash = $sha1.ComputeHash($keyBytes) } finally { $sha1.Dispose() }
+    $guidBytes    = New-Object 'System.Byte[]' 16
+    [Array]::Copy($hash, $guidBytes, 16)
+    $guidBytes[6] = ($guidBytes[6] -band 0x0F) -bor 0x50
+    $guidBytes[8] = ($guidBytes[8] -band 0x3F) -bor 0x80
+    $responseId   = ([System.Guid]::new([byte[]]$guidBytes)).ToString()
+
+    $body = @{
+        responseId       = $responseId
+        instanceId       = $InstanceId
+        questionId       = $QuestionId
+        questionVersion  = 1
+        projectId        = $ProjectId
+        approvalDecision = $ApprovalDecision
+        answeredVia      = 'outpost'
+        submittedAt      = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd'T'HH:mm:ss'Z'")
+    }
+    if ($Comment)        { $body['comment']        = $Comment }
+    if ($ResponderEmail) { $body['responderEmail']  = $ResponderEmail }
+
+    try {
+        $result = Invoke-RestMethod -Uri "$baseUrl/api/responses" -Method Post `
+            -Body ($body | ConvertTo-Json -Depth 5) -ContentType 'application/json' `
+            -Headers $headers -TimeoutSec 15
+        return @{ success = $true; response_id = $responseId; server_result = $result }
+    } catch {
+        return @{ success = $false; reason = "POST /api/responses failed: $($_.Exception.Message)" }
+    }
+}
+
 Export-ModuleMember -Function @(
     'Get-NotificationSettings'
     'Test-NotificationServer'
@@ -914,4 +1016,6 @@ Export-ModuleMember -Function @(
     'Remove-Attachment'
     'Invoke-AttachmentBatchUpload'
     'ConvertTo-TypedResponse'
+    'Get-AllTaskNotificationResponse'
+    'Send-LocalApprovalResponse'
 )
