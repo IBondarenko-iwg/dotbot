@@ -203,9 +203,19 @@ public class ResponseStorageService
         }
         catch (RequestFailedException ex) when (ex.Status == 409)
         {
-            var existing = await blob.DownloadContentAsync();
-            var record = JsonSerializer.Deserialize<ResponseRecordV2>(existing.Value.Content.ToString(), JsonOptions)!;
-            return (record, isNew: false);
+            try
+            {
+                var existing = await blob.DownloadContentAsync();
+                var record = JsonSerializer.Deserialize<ResponseRecordV2>(existing.Value.Content.ToString(), JsonOptions)!;
+                return (record, isNew: false);
+            }
+            catch (RequestFailedException dlEx) when (dlEx.Status == 404)
+            {
+                // Blob deleted between our 409 and our read — retry the upload
+                var retryJson = JsonSerializer.Serialize(response, JsonOptions);
+                await blob.UploadAsync(BinaryData.FromString(retryJson), overwrite: false);
+                return (response, isNew: true);
+            }
         }
     }
 

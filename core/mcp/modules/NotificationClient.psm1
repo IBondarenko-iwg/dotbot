@@ -948,6 +948,16 @@ function Get-AllTaskNotificationResponse {
         }
     }
 
+    $pGuid = [guid]::Empty
+    if (-not [guid]::TryParse("$projectId", [ref]$pGuid)) {
+        if (-not [System.Text.RegularExpressions.Regex]::IsMatch(
+                "$projectId", '^[a-z0-9][a-z0-9\-]{0,62}[a-z0-9]$')) {
+            return @()
+        }
+    } else {
+        $projectId = $pGuid.ToString()
+    }
+
     $qGuid = [guid]::Empty
     $iGuid = [guid]::Empty
     if (-not ([guid]::TryParse("$($Notification.question_id)", [ref]$qGuid)) -or
