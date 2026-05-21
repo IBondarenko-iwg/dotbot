@@ -190,7 +190,9 @@ function _renderList() {
 function _friendlyDate(iso) {
     if (!iso) return '';
     try {
-        return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+        const d = new Date(iso);
+        const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+        return `${months[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
     } catch { return iso; }
 }
 

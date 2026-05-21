@@ -16,6 +16,29 @@
     let nudgeCooldowns = {}; // key -> timestamp
 
     // --- Helpers ---
+    function formatDashboardDateTime(date) {
+        try {
+            const d = date instanceof Date ? date : new Date(date);
+            const parts = new Intl.DateTimeFormat('en-US', {
+                weekday: 'short', month: 'short', day: 'numeric',
+                year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
+            }).formatToParts(d);
+            const get = (t) => (parts.find(p => p.type === t) || {}).value || '';
+            return `${get('weekday')}, ${get('month')} ${get('day')} ${get('year')} ${get('hour')}:${get('minute')}`;
+        } catch (e) { return String(date); }
+    }
+
+    function formatDashboardTime(date) {
+        try {
+            const d = date instanceof Date ? date : new Date(date);
+            const parts = new Intl.DateTimeFormat('en-US', {
+                hour: '2-digit', minute: '2-digit', hour12: false
+            }).formatToParts(d);
+            const get = (t) => (parts.find(p => p.type === t) || {}).value || '';
+            return `${get('hour')}:${get('minute')}`;
+        } catch (e) { return ''; }
+    }
+
     function buildRecipientPills(recipients, max) {
         if (!recipients || recipients.length === 0) return '';
         // Sort: non-responders first, then responders
@@ -286,7 +309,7 @@
             </div>
             <div class="instance-meta-item">
                 <span class="instance-meta-label">Created</span>
-                <span class="instance-meta-value">${inst.createdAt ? new Date(inst.createdAt).toLocaleString() : '-'}</span>
+                <span class="instance-meta-value">${inst.createdAt ? formatDashboardDateTime(inst.createdAt) : '-'}</span>
             </div>
             <div class="instance-meta-item">
                 <span class="instance-meta-label">Created By</span>
@@ -814,6 +837,6 @@
 
     function updateRefreshTime() {
         const el = document.getElementById('last-refresh');
-        el.textContent = `Last refresh: ${new Date().toLocaleTimeString()}`;
+        el.textContent = `Last refresh: ${formatDashboardTime(new Date())}`;
     }
 })();
