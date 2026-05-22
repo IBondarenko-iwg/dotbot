@@ -175,7 +175,8 @@ function ConvertTo-SplatArg {
     }
     if ($positional.Count -gt $PositionalNames.Count) {
         $unexpected = $positional[$PositionalNames.Count..($positional.Count - 1)] -join ', '
-        Write-DotbotWarning "Unexpected argument(s): $unexpected"
+        Write-DotbotError "Unexpected argument(s): $unexpected"
+        exit 1
     }
     return $splat
 }
