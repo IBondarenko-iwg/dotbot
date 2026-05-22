@@ -173,6 +173,10 @@ function ConvertTo-SplatArg {
     for ($j = 0; $j -lt [Math]::Min($positional.Count, $PositionalNames.Count); $j++) {
         $splat[$PositionalNames[$j]] = $positional[$j]
     }
+    if ($positional.Count -gt $PositionalNames.Count) {
+        $unexpected = $positional[$PositionalNames.Count..($positional.Count - 1)] -join ', '
+        Write-DotbotWarning "Unexpected argument(s): $unexpected"
+    }
     return $splat
 }
 
