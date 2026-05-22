@@ -568,7 +568,7 @@ if (Test-Path $cliScript) {
     $regCliProj = New-TestProjectFromGolden -Flavor 'default'
     try {
         # registry add with named flags via CLI dispatcher — must not throw splatting error
-        $regAddOutput = & pwsh -NoProfile -ExecutionPolicy Bypass -Command "& '$cliScript' registry add TestReg https://example.com/repo.git --branch main --force" 2>&1
+        $regAddOutput = & pwsh -NoProfile -ExecutionPolicy Bypass -Command "& '$cliScript' registry add TestReg not-a-url --branch main --force" 2>&1
         $regAddFailed = $regAddOutput | Where-Object { $_ -match 'positional parameter cannot be found' -or $_ -match 'cannot be found that accepts argument' }
         Assert-True -Name "CLI 'registry add --branch --force' dispatches without splatting error" `
             -Condition ($null -eq $regAddFailed -or $regAddFailed.Count -eq 0) `
