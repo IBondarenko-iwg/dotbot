@@ -3302,9 +3302,9 @@ if (Test-Path $notifModule) {
         comment          = 'needs more context'
     }
     $typedApproval = ConvertTo-TypedResponse -Response $approvalResponse -Type 'approval'
-    Assert-True -Name "ConvertTo-TypedResponse extracts approval decision" `
-        -Condition ($typedApproval -and $typedApproval.approval_decision -eq 'rejected') `
-        -Message "Expected approval_decision=rejected, got: $($typedApproval | ConvertTo-Json -Compress)"
+    Assert-True -Name "ConvertTo-TypedResponse routes approval decision into answer field" `
+        -Condition ($typedApproval -and $typedApproval.answer -eq 'rejected') `
+        -Message "Expected answer=rejected, got: $($typedApproval | ConvertTo-Json -Compress)"
     Assert-True -Name "ConvertTo-TypedResponse extracts approval comment" `
         -Condition ($typedApproval.comment -eq 'needs more context') `
         -Message "Expected comment, got: $($typedApproval.comment)"
@@ -3712,9 +3712,9 @@ if (Test-Path $notifModule) {
 
         Assert-True -Name "Poller transitions needs-input → analysing on typed approval response" `
             -Condition $movedExists -Message "Expected task moved to analysing/, missing: $movedFile"
-        Assert-True -Name "Poller persists approval_decision (PRD §5.4)" `
-            -Condition ($resolvedQA -and $resolvedQA.approval_decision -eq 'rejected') `
-            -Message "Expected approval_decision=rejected, got: $($resolvedQA | ConvertTo-Json -Compress)"
+        Assert-True -Name "Poller persists approval decision in answer field" `
+            -Condition ($resolvedQA -and $resolvedQA.answer -eq 'rejected') `
+            -Message "Expected answer=rejected, got: $($resolvedQA | ConvertTo-Json -Compress)"
         Assert-True -Name "Poller persists comment from typed response" `
             -Condition ($resolvedQA -and $resolvedQA.comment -eq 'not yet') `
             -Message "Expected comment='not yet'"
@@ -4075,8 +4075,10 @@ if ((Test-Path $mniMeta) -and (Test-Path $aqMeta)) {
     Assert-True -Name "task-answer-question schema declares 'type' enum (full PRD)" `
         -Condition ($aqText -match '(?ms)\btype:\s*\r?\n\s+type:\s*string\s*\r?\n\s+enum:\s*\[singleChoice') `
         -Message "Expected type field with full PRD enum"
-    Assert-True -Name "task-answer-question schema declares 'decision'" `
-        -Condition ($aqText -match 'decision:') -Message "Expected decision key"
+    Assert-True -Name "task-answer-question schema declares 'answer' as canonical response field" `
+        -Condition ($aqText -match '(?ms)\banswer:\s*\r?\n\s+type:\s*string') -Message "Expected answer key with string type"
+    Assert-True -Name "task-answer-question schema does NOT declare deprecated 'decision'" `
+        -Condition (-not ($aqText -match '(?ms)^\s+decision:\s*\r?\n')) -Message "Decision field collapsed into answer; schema must not re-declare it"
     Assert-True -Name "task-answer-question schema declares 'comment'" `
         -Condition ($aqText -match 'comment:') -Message "Expected comment key"
     Assert-True -Name "task-answer-question schema declares 'ranked_items'" `
@@ -4094,16 +4096,16 @@ if ((Test-Path $mniMeta) -and (Test-Path $aqMeta)) {
         try {
             . $aqScript
 
-            # Invalid decision for approval
+            # Invalid answer for approval
             $threw = $false; $msg = ""
-            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; decision='bogus' } } catch { $threw = $true; $msg = $_.Exception.Message }
-            Assert-True -Name "task-answer-question rejects invalid approval decision" `
-                -Condition ($threw -and $msg -match "Invalid 'decision'") `
-                -Message "Expected throw on bogus decision, got: $msg"
+            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; answer='bogus' } } catch { $threw = $true; $msg = $_.Exception.Message }
+            Assert-True -Name "task-answer-question rejects invalid approval answer" `
+                -Condition ($threw -and $msg -match "Invalid 'answer'") `
+                -Message "Expected throw on bogus approval answer, got: $msg"
 
-            # decision=rejected without comment
+            # answer=rejected without comment
             $threw = $false; $msg = ""
-            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; decision='rejected' } } catch { $threw = $true; $msg = $_.Exception.Message }
+            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; answer='rejected' } } catch { $threw = $true; $msg = $_.Exception.Message }
             Assert-True -Name "task-answer-question rejects rejected without comment" `
                 -Condition ($threw -and $msg -match "comment.*rejected") `
                 -Message "Expected throw on missing comment, got: $msg"
@@ -4129,57 +4131,33 @@ if ((Test-Path $mniMeta) -and (Test-Path $aqMeta)) {
                 -Condition ($threw -and $msg -match "Invalid 'type'") `
                 -Message "Expected throw on bogus type, got: $msg"
 
-            # Cross-field validation: incompatible-field combinations
-            $threw = $false; $msg = ""
-            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='freeText'; answer='ok'; decision='approved' } } catch { $threw = $true; $msg = $_.Exception.Message }
-            Assert-True -Name "task-answer-question rejects 'decision' on freeText type" `
-                -Condition ($threw -and $msg -match "'decision' is only valid") `
-                -Message "Expected throw, got: $msg"
-
+            # Cross-field validation: comment only valid on approval
             $threw = $false; $msg = ""
             try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='singleChoice'; answer='A'; comment='nope' } } catch { $threw = $true; $msg = $_.Exception.Message }
             Assert-True -Name "task-answer-question rejects 'comment' on singleChoice type" `
                 -Condition ($threw -and $msg -match "'comment' is only valid") `
                 -Message "Expected throw, got: $msg"
 
+            # Cross-field validation: ranked_items only valid on priorityRanking
             $threw = $false; $msg = ""
-            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; decision='approved'; ranked_items=@('a','b') } } catch { $threw = $true; $msg = $_.Exception.Message }
+            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; answer='approved'; ranked_items=@('a','b') } } catch { $threw = $true; $msg = $_.Exception.Message }
             Assert-True -Name "task-answer-question rejects 'ranked_items' on approval type" `
                 -Condition ($threw -and $msg -match "'ranked_items' is only valid") `
                 -Message "Expected throw, got: $msg"
 
-            # Cross-field validation must also fire when 'type' is omitted (legacy callers)
-            $threw = $false; $msg = ""
-            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; answer='A'; decision='approved' } } catch { $threw = $true; $msg = $_.Exception.Message }
-            Assert-True -Name "task-answer-question rejects 'decision' when type is omitted (legacy)" `
-                -Condition ($threw -and $msg -match "'decision' is only valid") `
-                -Message "Expected throw on legacy caller smuggling decision, got: $msg"
-
+            # ranked_items smuggling when type omitted (defaults to singleChoice)
             $threw = $false; $msg = ""
             try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; answer='B'; ranked_items=@('a','b') } } catch { $threw = $true; $msg = $_.Exception.Message }
             Assert-True -Name "task-answer-question rejects 'ranked_items' when type is omitted (legacy)" `
                 -Condition ($threw -and $msg -match "'ranked_items' is only valid") `
                 -Message "Expected throw on legacy caller smuggling ranked_items, got: $msg"
 
-            # 'answer' rejected for typed payloads — would produce inconsistent resolvedEntry with both answer and approval_decision set
-            $threw = $false; $msg = ""
-            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; decision='approved'; answer='A' } } catch { $threw = $true; $msg = $_.Exception.Message }
-            Assert-True -Name "task-answer-question rejects 'answer' alongside approval decision" `
-                -Condition ($threw -and $msg -match "'answer' is only valid") `
-                -Message "Expected throw, got: $msg"
-
-            $threw = $false; $msg = ""
-            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='priorityRanking'; ranked_items=@('a','b'); answer='A' } } catch { $threw = $true; $msg = $_.Exception.Message }
-            Assert-True -Name "task-answer-question rejects 'answer' alongside priorityRanking" `
-                -Condition ($threw -and $msg -match "'answer' is only valid") `
-                -Message "Expected throw, got: $msg"
-
             # changes_requested was a documentReview value — now invalid on the merged approval type
             $threw = $false; $msg = ""
-            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; decision='changes_requested'; comment='ok' } } catch { $threw = $true; $msg = $_.Exception.Message }
-            Assert-True -Name "task-answer-question rejects legacy changes_requested decision on approval" `
-                -Condition ($threw -and $msg -match "Invalid 'decision'") `
-                -Message "Expected throw on legacy changes_requested decision, got: $msg"
+            try { Invoke-TaskAnswerQuestion -Arguments @{ task_id='x'; type='approval'; answer='changes_requested'; comment='ok' } } catch { $threw = $true; $msg = $_.Exception.Message }
+            Assert-True -Name "task-answer-question rejects legacy changes_requested answer on approval" `
+                -Condition ($threw -and $msg -match "Invalid 'answer'") `
+                -Message "Expected throw on legacy changes_requested answer, got: $msg"
 
             # priorityRanking synthesis must normalize PSCustomObject ranked_items to strings —
             # (verify the synthesis-time -join stays safe even for PSCustomObject input)

@@ -306,30 +306,8 @@ function renderQuestionItem(item) {
     }
 
     if (questionType === 'approval') {
-        const attachments = Array.isArray(question.attachments) ? question.attachments
-            : Array.isArray(question.attachmentList) ? question.attachmentList
-            : [];
-        const hasAttachments = attachments.length > 0;
-        const attachmentListHtml = hasAttachments ? `
-                <div class="approval-attachments">
-                    <div class="approval-attachments-label">Confirm the attachments you reviewed:</div>
-                    <ul class="approval-attachment-list">
-                        ${attachments.map(att => {
-                            const id = att.attachmentId || att.id || att.attachment_id || '';
-                            const name = att.name || 'attachment';
-                            return `
-                                <li class="approval-attachment-item">
-                                    <label>
-                                        <input type="checkbox" class="approval-reviewed-attachment" data-attachment-id="${escapeAttr(id)}" />
-                                        <span class="approval-attachment-name">${escapeHtml(name)}</span>
-                                    </label>
-                                </li>
-                            `;
-                        }).join('')}
-                    </ul>
-                </div>` : '';
         return `
-        <div class="action-item" data-task-id="${escapeHtml(item.task_id)}" data-type="question" data-question-type="approval" data-has-attachments="${hasAttachments ? 'true' : 'false'}">
+        <div class="action-item" data-task-id="${escapeHtml(item.task_id)}" data-type="question" data-question-type="approval">
             <div class="action-item-header">
                 <span class="action-item-type question">Approval</span>
                 <span class="action-item-task">${escapeHtml(item.task_name)}</span>
@@ -337,7 +315,6 @@ function renderQuestionItem(item) {
             <div class="action-item-body">
                 <div class="action-question-text">${escapeHtml(question.question || 'No question text')}</div>
                 ${question.context ? `<div class="action-question-context">${escapeHtml(question.context)}</div>` : ''}
-                ${attachmentListHtml}
                 <div class="approval-buttons">
                     <button class="ctrl-btn approval-decision" data-decision="approved">Approve</button>
                     <button class="ctrl-btn approval-decision danger" data-decision="rejected">Reject</button>
@@ -355,9 +332,12 @@ function renderQuestionItem(item) {
 
     const options = question.options || [];
     const isMultiSelect = question.multi_select || false;
+    // multi_select is a render flag on a singleChoice question — there is no
+    // separate "multiChoice" type in dotbot's local MCP layer.
+    const renderedType = question.type || 'singleChoice';
 
     return `
-        <div class="action-item" data-task-id="${escapeHtml(item.task_id)}" data-type="question">
+        <div class="action-item" data-task-id="${escapeHtml(item.task_id)}" data-type="question" data-question-type="${escapeAttr(renderedType)}">
             <div class="action-item-header">
                 <span class="action-item-type question">Question</span>
                 <span class="action-item-task">${escapeHtml(item.task_name)}</span>
@@ -426,7 +406,7 @@ function renderTaskQuestionsItem(item) {
             <div class="action-item-body">
                 ${questions.map((q, idx) => `
                     ${idx > 0 ? '<div class="question-divider"></div>' : ''}
-                    <div class="task-question-block" data-question-id="${escapeAttr(q.id)}" data-task-id="${escapeAttr(taskId)}">
+                    <div class="task-question-block" data-question-id="${escapeAttr(q.id)}" data-task-id="${escapeAttr(taskId)}" data-question-type="${escapeAttr(q.type || 'singleChoice')}">
                         <div class="action-question-text"><span class="question-number">Q${idx + 1}.</span> ${escapeHtml(q.question)}</div>
                         ${q.context ? `<div class="action-question-context">${escapeHtml(q.context)}</div>` : ''}
                         <div class="answer-options" data-multi-select="false">
@@ -494,6 +474,7 @@ async function submitTaskQuestion(taskId, questionId) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 task_id: taskId,
+                type: questionBlock.dataset.questionType || 'singleChoice',
                 question_id: questionId,
                 answer: answer,
                 custom_text: customText
@@ -769,6 +750,7 @@ function attachActionHandlers(container) {
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         task_id: taskId,
+                        type: actionItem.dataset.questionType || 'singleChoice',
                         answer: selected.length === 1 ? selected[0]
                               : selected.length > 1 ? selected
                               : customText || '',
@@ -890,28 +872,16 @@ function attachActionHandlers(container) {
                 return;
             }
 
-            let reviewedAttachmentIds = null;
-            if (actionItem.dataset.hasAttachments === 'true') {
-                reviewedAttachmentIds = Array.from(
-                    actionItem.querySelectorAll('.approval-reviewed-attachment:checked')
-                ).map(cb => cb.dataset.attachmentId).filter(Boolean);
-                if (reviewedAttachmentIds.length === 0) {
-                    showToast('Please confirm you reviewed at least one attachment', 'warning');
-                    return;
-                }
-            }
-
             btn.disabled = true;
             btn.textContent = 'Submitting...';
 
             try {
                 const body = {
                     task_id: taskId,
+                    type: 'approval',
                     answer: decision,
-                    decision: decision,
                     comment: comment || null
                 };
-                if (reviewedAttachmentIds) body.reviewed_attachment_ids = reviewedAttachmentIds;
                 const response = await fetch(`${API_BASE}/api/task/answer`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },

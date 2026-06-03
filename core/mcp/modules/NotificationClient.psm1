@@ -801,9 +801,9 @@ function ConvertTo-TypedResponse {
     .OUTPUTS
     Hashtable. Keys (only set when applicable):
       answer_type        - the type string echoed back
-      answer             - resolved string for singleChoice (key) / freeText (string)
-      approval_decision  - approval decision value
-      comment            - free-text comment
+      answer             - response value (option key for singleChoice, free text
+                           for freeText, "approved"/"rejected" for approval)
+      comment            - free-text comment (approval only)
       ranked_items       - array for priorityRanking
       attachment_refs    - array of @{ name; size_bytes; storage_ref; description }
     Returns $null when no meaningful payload found.
@@ -857,8 +857,11 @@ function ConvertTo-TypedResponse {
 
     switch ($Type) {
         'approval' {
-            if ($decision) { $out['approval_decision'] = $decision }
-            if ($comment)  { $out['comment']           = $comment  }
+            # For approval, `answer` carries the decision value ("approved" /
+            # "rejected") — same wire shape as singleChoice/freeText so callers
+            # never need a separate decision field to extract the response.
+            if ($decision) { $out['answer']  = $decision }
+            if ($comment)  { $out['comment'] = $comment  }
         }
         'priorityRanking' {
             if ($rankedItems) {

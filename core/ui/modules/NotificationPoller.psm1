@@ -163,7 +163,6 @@ function Invoke-NotificationPollTick {
                             $typed['all_responses'] = $allResponses
                         }
                         $answerStr = if ($typed.ContainsKey('answer')) { $typed.answer }
-                                     elseif ($typed.ContainsKey('approval_decision')) { $typed.approval_decision }
                                      elseif ($typed.ContainsKey('ranked_items')) { (@($typed.ranked_items) -join ', ') }
                                      else { '' }
                         Invoke-TaskTransitionFromNotification -TaskFile $taskFile -TaskContent $taskContent `
@@ -209,7 +208,6 @@ function Invoke-NotificationPollTick {
                 $taskContent = Get-Content -Path $taskFile.FullName -Raw | ConvertFrom-Json
 
                 $answerStr = if ($typed.ContainsKey('answer')) { $typed.answer }
-                             elseif ($typed.ContainsKey('approval_decision')) { $typed.approval_decision }
                              elseif ($typed.ContainsKey('ranked_items')) { (@($typed.ranked_items) -join ', ') }
                              else { '' }
                 Invoke-BatchQuestionTransitionFromNotification -TaskFile $taskFile -TaskContent $taskContent `
@@ -289,7 +287,6 @@ function Invoke-TaskTransitionFromNotification {
     }
     if ($TypedFields) {
         if ($TypedFields.ContainsKey('answer_type'))       { $resolvedEntry['answer_type']       = $TypedFields.answer_type }
-        if ($TypedFields.ContainsKey('approval_decision')) { $resolvedEntry['approval_decision'] = $TypedFields.approval_decision }
         if ($TypedFields.ContainsKey('comment'))           { $resolvedEntry['comment']           = $TypedFields.comment }
         if ($TypedFields.ContainsKey('ranked_items'))      { $resolvedEntry['ranked_items']      = $TypedFields.ranked_items }
         if ($TypedFields.ContainsKey('has_disagreement'))  { $resolvedEntry['has_disagreement']  = $TypedFields.has_disagreement }
@@ -502,7 +499,6 @@ function Invoke-BatchQuestionTransitionFromNotification {
     }
     if ($TypedFields) {
         if ($TypedFields.ContainsKey('answer_type'))       { $resolvedEntry['answer_type']       = $TypedFields.answer_type }
-        if ($TypedFields.ContainsKey('approval_decision')) { $resolvedEntry['approval_decision'] = $TypedFields.approval_decision }
         if ($TypedFields.ContainsKey('comment'))           { $resolvedEntry['comment']           = $TypedFields.comment }
         if ($TypedFields.ContainsKey('ranked_items'))      { $resolvedEntry['ranked_items']      = $TypedFields.ranked_items }
         if ($TypedFields.ContainsKey('has_disagreement'))  { $resolvedEntry['has_disagreement']  = $TypedFields.has_disagreement }

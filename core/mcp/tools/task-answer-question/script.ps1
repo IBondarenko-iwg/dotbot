@@ -27,21 +27,18 @@ function Invoke-TaskAnswerQuestion {
     )
 
     # Extract arguments
-    $taskId = $Arguments['task_id']
-    $answer = $Arguments['answer']
-    $attachments = $Arguments['attachments']
-    $questionId = $Arguments['question_id']  # Optional: which question to answer (for pending_questions batch)
+    $taskId       = $Arguments['task_id']
+    $answer       = $Arguments['answer']
+    $attachments  = $Arguments['attachments']
+    $questionId   = $Arguments['question_id']  # Optional: which question to answer (for pending_questions batch)
     $questionType = if ($Arguments['type']) { "$($Arguments['type'])" } else { $null }
-    $decision = if ($Arguments['decision']) { "$($Arguments['decision'])" } else { $null }
-    $comment = if ($Arguments['comment']) { "$($Arguments['comment'])" } else { $null }
-    $rankedItems = $Arguments['ranked_items']
+    $comment      = if ($Arguments['comment']) { "$($Arguments['comment'])" } else { $null }
+    $rankedItems  = $Arguments['ranked_items']
 
-    # Validate required fields
     if (-not $taskId) {
         throw "Task ID is required"
     }
 
-    # Type-specific validation (PRD §4.1, §4.6)
     $validDecisions = @{
         approval = @('approved', 'rejected')
     }
@@ -51,14 +48,14 @@ function Invoke-TaskAnswerQuestion {
     }
 
     if ($questionType -and $validDecisions.ContainsKey($questionType)) {
-        if (-not $decision) {
-            throw "'decision' is required for type '$questionType'"
+        if (-not $answer) {
+            throw "'answer' is required for type '$questionType' (one of: $($validDecisions[$questionType] -join ', '))"
         }
-        if ($decision -notin $validDecisions[$questionType]) {
-            throw "Invalid 'decision' value '$decision' for type '$questionType'. Allowed: $($validDecisions[$questionType] -join ', ')"
+        if ($answer -notin $validDecisions[$questionType]) {
+            throw "Invalid 'answer' value '$answer' for type '$questionType'. Allowed: $($validDecisions[$questionType] -join ', ')"
         }
-        if ($decision -eq 'rejected' -and -not $comment) {
-            throw "'comment' is required when decision='rejected'"
+        if ($answer -eq 'rejected' -and -not $comment) {
+            throw "'comment' is required when answer='rejected'"
         }
     } elseif ($questionType -eq 'priorityRanking') {
         if (-not $rankedItems -or @($rankedItems).Count -eq 0) {
@@ -73,43 +70,32 @@ function Invoke-TaskAnswerQuestion {
 
     # Cross-field validation: reject mutually-incompatible fields so callers
     # can't smuggle approval semantics into a freeText/singleChoice answer
-    # (would produce inconsistent questions_resolved entries). Runs even when
-    # 'type' is omitted — legacy callers default to singleChoice for this check
-    # so decision/comment/ranked_items can't sneak in alongside a plain answer.
+    # (would produce inconsistent questions_resolved entries).
     $effectiveType = if ($questionType) { $questionType } else { 'singleChoice' }
-    if ($decision -and $effectiveType -ne 'approval') {
-        throw "'decision' is only valid for type 'approval', got type='$effectiveType'"
-    }
     if ($comment -and $effectiveType -ne 'approval') {
         throw "'comment' is only valid for type 'approval', got type='$effectiveType'"
     }
     if ($rankedItems -and $effectiveType -ne 'priorityRanking') {
         throw "'ranked_items' is only valid for type 'priorityRanking', got type='$effectiveType'"
     }
-    # Reject 'answer' when caller passes it alongside a typed payload — would
-    # produce inconsistent resolvedEntry (e.g., answer='A' + approval_decision='approved').
-    if ($answer -and $effectiveType -notin @('singleChoice', 'freeText')) {
-        throw "'answer' is only valid for type 'singleChoice' or 'freeText', got type='$effectiveType'. Use 'decision' (approval) or 'ranked_items' (priorityRanking)."
-    }
 
-    # Synthesize an answer string for non-question types so downstream
-    # status-transition logic (skip detection, summary text) keeps working.
-    if (-not $answer) {
-        $answer = if ($decision) { $decision }
-                  elseif ($rankedItems) {
-                      # Normalize each item: extract optionId string if Claude passed
-                      # PSCustomObject/hashtable items (e.g. from a prior response object)
-                      # so -join doesn't stringify to "System.Management.Automation.PSCustomObject".
-                      $normalized = @($rankedItems | ForEach-Object {
-                          if ($_ -is [string]) { $_ }
-                          elseif ($_ -is [hashtable] -and $_.ContainsKey('optionId')) { "$($_['optionId'])" }
-                          elseif ($_.PSObject.Properties['optionId']) { "$($_.optionId)" }
-                          else { "$_" }
-                      })
-                      $normalized -join ', '
-                  }
-                  else { '' }
+    # Synthesize an answer string for typed payloads that don't carry a free-form
+    # answer so downstream status-transition logic (skip detection, summary text)
+    # keeps working. priorityRanking is the only remaining shape — approval now
+    # routes its decision through $answer directly.
+    if (-not $answer -and $rankedItems) {
+        # Normalize each item: extract optionId string if Claude passed
+        # PSCustomObject/hashtable items (e.g. from a prior response object)
+        # so -join doesn't stringify to "System.Management.Automation.PSCustomObject".
+        $normalized = @($rankedItems | ForEach-Object {
+            if ($_ -is [string]) { $_ }
+            elseif ($_ -is [hashtable] -and $_.ContainsKey('optionId')) { "$($_['optionId'])" }
+            elseif ($_.PSObject.Properties['optionId']) { "$($_.optionId)" }
+            else { "$_" }
+        })
+        $answer = $normalized -join ', '
     }
+    if (-not $answer) { $answer = '' }
 
     # Define tasks directories
     $tasksBaseDir = Join-Path $global:DotbotProjectRoot ".bot\workspace\tasks"
@@ -196,7 +182,6 @@ function Invoke-TaskAnswerQuestion {
         if ($attachments -and $attachments.Count -gt 0) {
             $resolvedEntry['attachments'] = $attachments
         }
-        if ($decision) { $resolvedEntry['approval_decision'] = $decision }
         if ($comment)  { $resolvedEntry['comment']           = $comment  }
         if ($rankedItems) { $resolvedEntry['ranked_items']  = @($rankedItems) }
 
@@ -211,7 +196,6 @@ function Invoke-TaskAnswerQuestion {
             answer_type  = if ($questionType) { $questionType } else { $answerType }
             answered_at  = $answeredAt
         }
-        if ($decision)    { $interviewEntry['approval_decision'] = $decision }
         if ($comment)     { $interviewEntry['comment']           = $comment  }
         if ($rankedItems) { $interviewEntry['ranked_items']      = @($rankedItems) }
         Write-InterviewAnswer -BotRoot (Join-Path $global:DotbotProjectRoot '.bot') -Entry $interviewEntry
@@ -361,7 +345,6 @@ function Invoke-TaskAnswerQuestion {
     if ($attachments -and $attachments.Count -gt 0) {
         $resolvedEntry['attachments'] = $attachments
     }
-    if ($decision) { $resolvedEntry['approval_decision'] = $decision }
     if ($comment)  { $resolvedEntry['comment']           = $comment  }
     if ($rankedItems) { $resolvedEntry['ranked_items']  = @($rankedItems) }
 
@@ -379,7 +362,6 @@ function Invoke-TaskAnswerQuestion {
         answer_type  = if ($questionType) { $questionType } else { $answerType }
         answered_at  = $answeredAt
     }
-    if ($decision)    { $singularInterviewEntry['approval_decision'] = $decision }
     if ($comment)     { $singularInterviewEntry['comment']           = $comment  }
     if ($rankedItems) { $singularInterviewEntry['ranked_items']      = @($rankedItems) }
     Write-InterviewAnswer -BotRoot (Join-Path $global:DotbotProjectRoot '.bot') -Entry $singularInterviewEntry

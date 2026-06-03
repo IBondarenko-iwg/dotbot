@@ -8,18 +8,14 @@ inputSchema:
       description: "The unique identifier of the task"
     answer:
       type: string
-      description: "The answer - either an option key (A, B, C, D, E) or a custom freeform answer. Required for singleChoice/freeText types."
+      description: "The user's response. Interpretation depends on `type`: option key (A-E) or custom text for singleChoice; reviewer text for freeText; 'approved' or 'rejected' for approval. Required for all non-priorityRanking types."
     type:
       type: string
       enum: [singleChoice, approval, freeText, priorityRanking]
-      description: "Question type. Determines which fields are required/validated."
-    decision:
-      type: string
-      enum: [approved, rejected]
-      description: "Required for approval. Allowed values: approved, rejected."
+      description: "Question type. Determines which fields are required/validated. Should match the type stamped on the pending question by task_mark_needs_input."
     comment:
       type: string
-      description: "Required when decision=rejected on an approval question."
+      description: "Required when answer='rejected' on an approval question."
     ranked_items:
       type: array
       description: "Required for priorityRanking. Ordered list of item identifiers."
