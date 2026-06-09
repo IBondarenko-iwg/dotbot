@@ -1076,7 +1076,14 @@ if (-not $RunId) {
         ForEach-Object {
             try {
                 $p = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
-                if ($p.status -in @('running', 'starting') -and $p.run_id) { [string]$p.run_id }
+                $pStatus = if ($p.PSObject.Properties['status'])  { [string]$p.status  } else { $null }
+                $pRunId  = if ($p.PSObject.Properties['run_id'])  { [string]$p.run_id  } else { $null }
+                $pPid    = if ($p.PSObject.Properties['pid'])     { $p.pid             } else { $null }
+                # Only exclude run_id when the process is running/starting AND its PID is still alive.
+                # Killed processes leave status='running' in their file — PID check distinguishes live vs stale.
+                if ($pStatus -in @('running', 'starting') -and $pRunId -and $pPid) {
+                    if (Get-Process -Id $pPid -ErrorAction SilentlyContinue) { $pRunId }
+                }
             } catch {
                 Write-BotLog -Level Debug -Message "Crash recovery: failed to read process file '$($_.Name)'" -Exception $_
             }

@@ -1543,7 +1543,8 @@ try {
     New-TaskFixture -TaskId "rip-todo"    -Status "todo"         -Dir $runDir
     New-TaskFixture -TaskId "rip-done"    -Status "done"         -Dir $runDir
 
-    $result = @(Reset-InProgressTasks -RunDir $runDir)
+    $result = Reset-InProgressTasks -RunDir $runDir
+    if (-not $result) { $result = @() }
     Assert-True -Name "Reset-InProgressTasks: returns one recovered entry (issue #470)" `
         -Condition ($result.Count -eq 1) `
         -Message "Expected 1 recovered task, got $($result.Count)"
@@ -1580,7 +1581,8 @@ try {
     New-Item -ItemType Directory -Path $nestedDir -Force | Out-Null
     New-TaskFixture -TaskId "rip-nested" -Status "in-progress" -Dir $nestedDir
 
-    $result3 = @(Reset-InProgressTasks -RunDir $runDir -Recurse)
+    $result3 = Reset-InProgressTasks -RunDir $runDir -Recurse
+    if (-not $result3) { $result3 = @() }
     Assert-True -Name "Reset-InProgressTasks: Recurse finds nested in-progress task" `
         -Condition ($result3.Count -eq 1 -and $result3[0].id -eq 'rip-nested') `
         -Message "Expected 1 nested task recovered, got $($result3.Count)"

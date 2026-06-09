@@ -442,7 +442,7 @@ function Reset-InProgressTasks {
     $resetTasks = @()
 
     if (-not (Test-Path -LiteralPath $RunDir)) {
-        return $resetTasks
+        return ,$resetTasks
     }
 
     $taskFiles = @(Get-ChildItem -LiteralPath $RunDir -Filter '*.json' -File -Recurse:$Recurse -ErrorAction SilentlyContinue |
