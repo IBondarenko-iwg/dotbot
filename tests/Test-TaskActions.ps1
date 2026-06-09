@@ -1502,6 +1502,97 @@ finally {
     }
 }
 
+# ─── Reset-InProgressTasks crash recovery (issue #470) ──────────────────────
+# Verifies that Reset-InProgressTasks resets in-progress tasks to todo via
+# in-place JSON field update (new workflow-runs layout). Tasks in other statuses
+# must not be touched. The function must handle both flat and recursive scan.
+
+$testProject = $null
+$savedDotbotProjectRoot = $global:DotbotProjectRoot
+try {
+    $testProject = New-SourceBackedTestProject -RepoRoot $repoRoot
+    Push-Location $testProject
+    $botDir   = Join-Path $testProject ".bot"
+    $runDir   = Join-Path $botDir "workspace\tasks\workflow-runs\test-run-001"
+    New-Item -ItemType Directory -Path $runDir -Force | Out-Null
+
+    $global:DotbotProjectRoot = $testProject
+
+    Import-Module (Join-Path $botDir "src/runtime/Modules/Dotbot.Task/Dotbot.Task.psd1") -Force -DisableNameChecking
+
+    function New-TaskFixture {
+        param(
+            [Parameter(Mandatory)][string]$TaskId,
+            [Parameter(Mandatory)][string]$Status,
+            [Parameter(Mandatory)][string]$Dir
+        )
+        $task = [ordered]@{
+            id          = $TaskId
+            name        = "Fixture $TaskId"
+            description = "Reset-InProgressTasks fixture for #470"
+            status      = $Status
+            started_at  = if ($Status -eq 'in-progress') { "2026-01-01T00:00:00Z" } else { $null }
+            updated_at  = "2026-01-01T00:00:00Z"
+            completed_at = $null
+        }
+        $task | ConvertTo-Json -Depth 10 | Set-Content -Path (Join-Path $Dir "$TaskId.json") -Encoding UTF8
+    }
+
+    # ── Scenario 1: in-progress task is reset to todo ──
+    New-TaskFixture -TaskId "rip-stuck"   -Status "in-progress" -Dir $runDir
+    New-TaskFixture -TaskId "rip-todo"    -Status "todo"         -Dir $runDir
+    New-TaskFixture -TaskId "rip-done"    -Status "done"         -Dir $runDir
+
+    $result = @(Reset-InProgressTasks -RunDir $runDir)
+    Assert-True -Name "Reset-InProgressTasks: returns one recovered entry (issue #470)" `
+        -Condition ($result.Count -eq 1) `
+        -Message "Expected 1 recovered task, got $($result.Count)"
+    Assert-True -Name "Reset-InProgressTasks: recovered entry has correct id" `
+        -Condition ($result[0].id -eq 'rip-stuck') `
+        -Message "Expected id 'rip-stuck', got '$($result[0].id)'"
+
+    $stuckContent = Get-Content -Path (Join-Path $runDir "rip-stuck.json") -Raw | ConvertFrom-Json
+    Assert-Equal -Name "Reset-InProgressTasks: stuck task status reset to todo" `
+        -Expected "todo" -Actual ([string]$stuckContent.status) `
+        -Message "Expected status 'todo', got '$($stuckContent.status)'"
+    Assert-True -Name "Reset-InProgressTasks: started_at cleared on reset" `
+        -Condition ($null -eq $stuckContent.started_at) `
+        -Message "Expected started_at to be null after reset"
+
+    $todoContent = Get-Content -Path (Join-Path $runDir "rip-todo.json") -Raw | ConvertFrom-Json
+    Assert-Equal -Name "Reset-InProgressTasks: todo task not touched" `
+        -Expected "todo" -Actual ([string]$todoContent.status) `
+        -Message "Expected todo task status unchanged"
+
+    $doneContent = Get-Content -Path (Join-Path $runDir "rip-done.json") -Raw | ConvertFrom-Json
+    Assert-Equal -Name "Reset-InProgressTasks: done task not touched" `
+        -Expected "done" -Actual ([string]$doneContent.status) `
+        -Message "Expected done task status unchanged"
+
+    # ── Scenario 2: no in-progress tasks — returns empty ──
+    $result2 = Reset-InProgressTasks -RunDir $runDir
+    Assert-True -Name "Reset-InProgressTasks: no-op when no in-progress tasks" `
+        -Condition ($result2.Count -eq 0) `
+        -Message "Expected 0 recovered tasks on second call, got $($result2.Count)"
+
+    # ── Scenario 3: Recurse flag scans nested dirs ──
+    $nestedDir = Join-Path $runDir "sub"
+    New-Item -ItemType Directory -Path $nestedDir -Force | Out-Null
+    New-TaskFixture -TaskId "rip-nested" -Status "in-progress" -Dir $nestedDir
+
+    $result3 = @(Reset-InProgressTasks -RunDir $runDir -Recurse)
+    Assert-True -Name "Reset-InProgressTasks: Recurse finds nested in-progress task" `
+        -Condition ($result3.Count -eq 1 -and $result3[0].id -eq 'rip-nested') `
+        -Message "Expected 1 nested task recovered, got $($result3.Count)"
+}
+finally {
+    $global:DotbotProjectRoot = $savedDotbotProjectRoot
+    Pop-Location -ErrorAction SilentlyContinue
+    if ($testProject) {
+        Remove-TestProject -Path $testProject
+    }
+}
+
 # ─── task-get-next runtime condition evaluation ──────────────────────────────
 # task-get-next is a thin HTTP wrapper around GET /tasks/next. Condition
 # evaluation is covered by handler-level runtime tests.
