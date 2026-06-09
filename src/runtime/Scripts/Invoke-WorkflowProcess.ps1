@@ -463,7 +463,7 @@ function New-ExecutorRunContext {
 function Read-DotbotMcpPreflightLine {
     param(
         [Parameter(Mandatory)] [System.Diagnostics.Process]$Process,
-        [int]$TimeoutMs = 5000
+        [int]$TimeoutMs = 15000
     )
 
     $readTask = $Process.StandardOutput.ReadLineAsync()
@@ -541,20 +541,27 @@ function Test-DotbotMcpReadiness {
         $proc.StartInfo = $psi
         $proc.Start() | Out-Null
 
-        $initRequest = @{
-            jsonrpc = '2.0'
-            id      = 1
-            method  = 'initialize'
-            params  = @{
-                protocolVersion = '2024-11-05'
-                capabilities    = @{}
-                clientInfo      = @{ name = 'dotbot-workflow-preflight'; version = '1' }
-            }
-        } | ConvertTo-Json -Depth 10 -Compress
-        $proc.StandardInput.WriteLine($initRequest)
-        $proc.StandardInput.Flush()
+        $init = $null
+        for ($attempt = 1; $attempt -le 2; $attempt++) {
+            $initRequest = @{
+                jsonrpc = '2.0'
+                id      = 1
+                method  = 'initialize'
+                params  = @{
+                    protocolVersion = '2024-11-05'
+                    capabilities    = @{}
+                    clientInfo      = @{ name = 'dotbot-workflow-preflight'; version = '1' }
+                }
+            } | ConvertTo-Json -Depth 10 -Compress
+            $proc.StandardInput.WriteLine($initRequest)
+            $proc.StandardInput.Flush()
 
-        $init = Read-DotbotMcpPreflightLine -Process $proc
+            $init = Read-DotbotMcpPreflightLine -Process $proc
+            if ($init.ok) { break }
+            if ($attempt -lt 2) {
+                Write-BotLog -Level Debug -Message "MCP preflight initialize attempt $attempt failed ($($init.message)), retrying..."
+            }
+        }
         if (-not $init.ok) { return @{ ok = $false; reason = 'initialize_failed'; message = $init.message } }
         if ($init.response.ContainsKey('error')) {
             return @{ ok = $false; reason = 'initialize_error'; message = "MCP initialize failed: $($init.response.error.message)" }
