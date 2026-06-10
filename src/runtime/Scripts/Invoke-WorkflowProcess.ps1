@@ -42,6 +42,7 @@ if ($settings.execution -and $settings.execution.PSObject.Properties['provider_s
 }
 
 $tasksBaseDir = Join-Path (Join-Path $botRoot "workspace") "tasks"
+$WorkflowName = if ($processData -is [hashtable] -and $processData['workflow_name']) { [string]$processData['workflow_name'] } else { $null }
 
 if (-not (Get-Module Dotbot.TaskInput)) {
     Import-Module (Join-Path $PSScriptRoot ".." "Modules" "Dotbot.TaskInput" "Dotbot.TaskInput.psd1") -DisableNameChecking -Global
@@ -1061,12 +1062,52 @@ if ($RunId) {
 } else {
     $runDir = $tasksBaseDir
 }
-$todoCount = 0
 $taskSnapshotRecurse = -not [bool]$RunId
+
+# Crash recovery: reset in-progress tasks left by a previously killed runner.
+# For RunId runs: scoped to this run's dir — no exclusion needed.
+# For no-RunId (pending-task-scope): collect active run IDs so we don't touch
+# tasks that belong to a workflow run with a live process.
+$crashRecoveryParams = @{ RunDir = $runDir; Recurse = $taskSnapshotRecurse }
+if ($WorkflowName) { $crashRecoveryParams['WorkflowName'] = $WorkflowName }
+if (-not $RunId) {
+    $activeRunIds = @(
+        Get-ChildItem -LiteralPath $processesDir -Filter '*.json' -File -ErrorAction SilentlyContinue |
+        ForEach-Object {
+            try {
+                $p = Get-Content -LiteralPath $_.FullName -Raw | ConvertFrom-Json
+                $pStatus = if ($p.PSObject.Properties['status'])  { [string]$p.status  } else { $null }
+                $pRunId  = if ($p.PSObject.Properties['run_id'])  { [string]$p.run_id  } else { $null }
+                $pPid    = if ($p.PSObject.Properties['pid'])     { $p.pid             } else { $null }
+                # Only exclude run_id when the process is running/starting AND its PID is still alive.
+                # Killed processes leave status='running' in their file — PID check distinguishes live vs stale.
+                if ($pStatus -in @('running', 'starting') -and $pRunId -and $pPid) {
+                    if (Get-Process -Id $pPid -ErrorAction SilentlyContinue) { $pRunId }
+                }
+            } catch {
+                Write-BotLog -Level Debug -Message "Crash recovery: failed to read process file '$($_.Name)'" -Exception $_
+            }
+        } | Where-Object { $_ }
+    )
+    if ($activeRunIds.Count -gt 0) { $crashRecoveryParams['ExcludeRunIds'] = $activeRunIds }
+}
+$recovered = Reset-InProgressTasks @crashRecoveryParams
+if (-not $recovered) { $recovered = @() }
+if ($recovered.Count -gt 0) {
+    $recoveredNames = ($recovered | ForEach-Object { $_['name'] }) -join ', '
+    Write-Status "Crash recovery: reset $($recovered.Count) in-progress task(s) to todo: $recoveredNames" -Type Warn
+    Write-ProcessActivity -Id $procId -ActivityType "text" -Message "Crash recovery: reset $($recovered.Count) in-progress task(s) to todo"
+}
+
+$todoCount = 0
 foreach ($f in @(Get-ChildItem -LiteralPath $runDir -Filter '*.json' -File -Recurse:$taskSnapshotRecurse -ErrorAction SilentlyContinue |
                     Where-Object { $_.Name -ne 'run.json' })) {
     try {
         $t = Get-Content -Path $f.FullName -Raw | ConvertFrom-Json
+        if ($WorkflowName -and -not $RunId) {
+            $tw = if ($t.PSObject.Properties['provenance'] -and $t.provenance) { [string]$t.provenance.workflow } else { $null }
+            if ($tw -ne $WorkflowName) { continue }
+        }
         switch ([string]$t.status) {
             'todo'     { $todoCount++ }
         }
@@ -1153,7 +1194,7 @@ try {
         Write-Status "Fetching next task..." -Type Process
 
         # Walk the run directory fresh on every pickup (no in-memory index).
-        $taskResult = Get-NextWorkflowTask -BotRoot $botRoot -RunId $RunId
+        $taskResult = Get-NextWorkflowTask -BotRoot $botRoot -RunId $RunId -WorkflowName $WorkflowName
 
         Write-Diag "TaskPickup: success=$($taskResult.success) hasTask=$($null -ne $taskResult.task) msg=$($taskResult.message)"
 
@@ -1193,7 +1234,7 @@ try {
                     if (Test-ProcessStopSignal -Id $procId) { break }
                     $processData.last_heartbeat = (Get-Date).ToUniversalTime().ToString("o")
                     Write-ProcessFile -Id $procId -Data $processData
-                    $taskResult = Get-NextWorkflowTask -BotRoot $botRoot -RunId $RunId
+                    $taskResult = Get-NextWorkflowTask -BotRoot $botRoot -RunId $RunId -WorkflowName $WorkflowName
                     if ($taskResult.task) { $foundTask = $true; break }
 
                     if ($RunId -and (Test-WorkflowComplete -BotRoot $botRoot -RunId $RunId)) {
@@ -1276,7 +1317,7 @@ try {
                 } catch {
                     Write-Diag "Slot ${Slot}: task $($task.id) claimed by another slot, retrying..."
                     Start-Sleep -Milliseconds 200
-                    $taskResult = Get-NextWorkflowTask -BotRoot $botRoot -RunId $RunId
+                    $taskResult = Get-NextWorkflowTask -BotRoot $botRoot -RunId $RunId -WorkflowName $WorkflowName
                     if (-not $taskResult.task) { break }
                     $task = $taskResult.task
                 }
@@ -1614,7 +1655,7 @@ try {
         try {
 
         # Re-read task data if a concurrent state update changed the selected task.
-        $freshTask = Get-NextWorkflowTask -BotRoot $botRoot -RunId $RunId
+        $freshTask = Get-NextWorkflowTask -BotRoot $botRoot -RunId $RunId -WorkflowName $WorkflowName
         Write-Diag "Execution TaskGetNext: hasTask=$($null -ne $freshTask.task) matchesId=$($freshTask.task.id -eq $task.id)"
         if ($freshTask.task -and $freshTask.task.id -eq $task.id) {
             $task = $freshTask.task
