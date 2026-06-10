@@ -805,8 +805,8 @@ async function stopPendingTasks() {
         });
         const data = await response.json();
         if (data.success) {
-            showSignalFeedback(`Stop signal sent — runner will stop after current task completes (${data.stopped} active)`);
-            showToast('Pending-tasks stop signal sent — will stop after current task', 'success');
+            showSignalFeedback(`Stop signal sent — runner will stop after current task completes (${data.stopped} runner${data.stopped === 1 ? '' : 's'})`);
+            showToast('Pending-tasks stop signal sent — will stop after current task completes', 'success');
         } else {
             showSignalFeedback(`Error: ${data.error || 'Stop failed'}`);
         }
@@ -898,7 +898,7 @@ async function stopWorkflow(name) {
         const data = await response.json();
         if (data.success) {
             showSignalFeedback(`Stop signal sent — workflow '${name}' will stop after current task completes`);
-            showToast(`Workflow "${name}" will stop after current task`, 'success');
+            showToast(`Workflow "${name}" will stop after current task completes`, 'success');
         } else {
             showSignalFeedback(`Error: ${data.error || 'Stop failed'}`);
         }
