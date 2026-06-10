@@ -4808,11 +4808,16 @@ if (Test-Path $inboxWatcherModule) {
         # ═══════════════════════════════════════════════════════════════
         # Behavioral tests — stub launcher satisfies the Test-Path guard
         # without needing a real dotbot install.
+        # DOTBOT_HOME is redirected to $inboxBotRoot so InboxWatcher resolves
+        # the launcher path to the stub, not the real Invoke-DotbotProcess.ps1.
         # ═══════════════════════════════════════════════════════════════
         $stubLauncherDir = Join-Path $inboxBotRoot "src" "runtime" "Scripts"
         $null = New-Item -ItemType Directory -Force -Path $stubLauncherDir
         "# test stub — exits immediately" |
             Set-Content -LiteralPath (Join-Path $stubLauncherDir "Invoke-DotbotProcess.ps1") -Encoding UTF8
+
+        $prevDotbotHome = $env:DOTBOT_HOME
+        $env:DOTBOT_HOME = $inboxBotRoot
 
         $launchersDir = Join-Path $controlDir "launchers"
 
@@ -4955,6 +4960,7 @@ if (Test-Path $inboxWatcherModule) {
             Remove-Item -Force -ErrorAction SilentlyContinue
 
     } finally {
+        if ($prevDotbotHome -ne $null) { $env:DOTBOT_HOME = $prevDotbotHome } else { $env:DOTBOT_HOME = $null }
         try { Stop-InboxWatcher } catch {}
         Remove-Module InboxWatcher -ErrorAction SilentlyContinue
         if ($inboxTestRoot -and (Test-Path $inboxTestRoot)) {
