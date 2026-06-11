@@ -1813,8 +1813,7 @@ Work on this task autonomously. When complete, ensure you call ``task_set_status
                 $streamArgs['StopGraceSeconds'] = $providerCompletionGraceSeconds
                 $streamArgs['StopCheckIntervalSeconds'] = $providerStopCheckIntervalSeconds
                 $streamResult = Invoke-HarnessStream @streamArgs
-                $exitCode = 0
-            } catch {
+                $exitCode = if ($streamResult -and $streamResult.PSObject.Properties['ExitCode']) { [int]$streamResult.ExitCode } else { 0 }
                 $execErrorText = $_.Exception.Message
                 Write-Status "Execution error: $execErrorText" -Type Error
                 $exitCode = 1
