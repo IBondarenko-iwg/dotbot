@@ -5875,7 +5875,9 @@ try {
 
     $phase4GoPortFile = Join-Path $phase4GoProject ".bot/.control/ui-port"
     $phase4GoRuntimeFile = Join-Path $phase4GoProject ".bot/.control/runtime.json"
-    $deadline = [DateTime]::UtcNow.AddSeconds(12)
+    # 30 s: macOS GitHub Actions runners have wider scheduling jitter than
+    # ubuntu/windows; 12 s proved too tight and caused intermittent flakes (#474).
+    $deadline = [DateTime]::UtcNow.AddSeconds(30)
     while ([DateTime]::UtcNow -lt $deadline -and
            ((-not (Test-Path $phase4GoPortFile)) -or (-not (Test-Path $phase4GoRuntimeFile))) -and
            -not $phase4GoProcess.HasExited) {
