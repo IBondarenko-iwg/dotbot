@@ -4641,6 +4641,7 @@ if (Test-Path $inboxWatcherModule) {
 
     $inboxTestRoot = Join-Path ([IO.Path]::GetTempPath()) "inbox-watcher-test-$([guid]::NewGuid().ToString('N').Substring(0,8))"
     try {
+        $prevDotbotHome = $env:DOTBOT_HOME
         # ── Scaffolding ──────────────────────────────────────────────────
         $inboxBotRoot  = Join-Path $inboxTestRoot ".bot"
         $settingsDir   = Join-Path $inboxBotRoot "settings"
@@ -4816,7 +4817,6 @@ if (Test-Path $inboxWatcherModule) {
         "# test stub — exits immediately" |
             Set-Content -LiteralPath (Join-Path $stubLauncherDir "Invoke-DotbotProcess.ps1") -Encoding UTF8
 
-        $prevDotbotHome = $env:DOTBOT_HOME
         $env:DOTBOT_HOME = $inboxBotRoot
 
         $launchersDir = Join-Path $controlDir "launchers"
