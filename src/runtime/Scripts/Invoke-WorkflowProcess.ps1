@@ -1814,6 +1814,7 @@ Work on this task autonomously. When complete, ensure you call ``task_set_status
                 $streamArgs['StopCheckIntervalSeconds'] = $providerStopCheckIntervalSeconds
                 $streamResult = Invoke-HarnessStream @streamArgs
                 $exitCode = if ($streamResult -and $streamResult.PSObject.Properties['ExitCode']) { [int]$streamResult.ExitCode } else { 0 }
+            } catch {
                 $execErrorText = $_.Exception.Message
                 Write-Status "Execution error: $execErrorText" -Type Error
                 $exitCode = 1
@@ -1896,7 +1897,8 @@ Work on this task autonomously. When complete, ensure you call ``task_set_status
             # merge, retry budget not consumed) and prompt the operator to
             # re-authenticate, instead of burning retries against the same wall.
             if ($failureReason.type -eq 'AuthError') {
-                $authContext = "$($failureReason.description). $($failureReason.suggested_action). Detail: $harnessErrText"
+                $authDetail = if ($harnessErrText.Length -gt 1000) { $harnessErrText.Substring(0, 1000) + " … [truncated, showing 1000 of $($harnessErrText.Length) chars]" } else { $harnessErrText }
+                $authContext = "$($failureReason.description). $($failureReason.suggested_action). Detail: $authDetail"
                 Write-Status "Auth expiry detected — parking for re-authentication: $($task.name)" -Type Warn
                 Write-ProcessActivity -Id $procId -ActivityType "text" -Message "Task '$($task.name)' parked (needs-input): re-authentication required"
                 Set-WorkflowTaskNeedsInput -Task $task -RunDir $runDir `
