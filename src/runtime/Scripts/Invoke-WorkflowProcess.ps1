@@ -1510,12 +1510,9 @@ try {
                     }
                     Write-Diag "Task $($task.id) claimed by another runner, retrying ($taskTypeVal)..."
                     Start-Sleep -Milliseconds 200
-                    $taskResult = Get-NextWorkflowTask -BotRoot $botRoot -RunId $RunId -WorkflowName $WorkflowName
-                    if (-not $taskResult.task) { break }
-                    $task = $taskResult.task
-                    # Always break on task swap — outer loop re-processes the replacement
-                    # with full task_gen/prompt_template recovery (lines 1434-1473).
-                    # Claiming in-place would bypass that recovery logic.
+                    # Break unconditionally — outer loop re-fetches and re-processes the next
+                    # task with full task_gen/prompt_template recovery. Fetching here is dead
+                    # code (result discarded on break) and opens a small race window.
                     break
                 }
             }
