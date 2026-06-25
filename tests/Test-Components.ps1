@@ -4453,7 +4453,7 @@ if (Test-Path $productApiModule) {
         # Use a name absent from main workspace/product so fallback path is exercised
         $pendingSvgContent = '<svg xmlns="http://www.w3.org/2000/svg"><rect/></svg>'
         Set-Content -Path (Join-Path $pendingWtProductDir "pending-only.svg") `
-            -Value $pendingSvgContent -Encoding UTF8
+            -Value $pendingSvgContent -Encoding UTF8 -NoNewline
         $pendingRawSvg = Get-ProductDocumentRaw -Name "pending-only.svg"
         Assert-True -Name "ProductDocumentRaw falls back to needs-review worktree for SVG" `
             -Condition ($pendingRawSvg.Found -eq $true) `
