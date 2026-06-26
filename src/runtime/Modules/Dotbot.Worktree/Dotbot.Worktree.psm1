@@ -1890,9 +1890,13 @@ function Complete-TaskWorktree {
             }
             git -C $ProjectRoot worktree remove $worktreePath 2>$null
         }
-        # Fallback: direct filesystem delete when git worktree remove leaves dir behind (e.g. Windows open handles)
+        # Fallback: direct filesystem delete when git worktree remove leaves the dir
+        # behind (e.g. Windows open handles). Gated on junctions being gone — on
+        # Windows Remove-Item -Recurse follows junctions and would delete link
+        # targets (shared task state, product workspace). If junctions survived,
+        # skip the delete; the entry is kept below for manual cleanup.
         $worktreeParentDir = Join-Path (Split-Path $ProjectRoot -Parent) "worktrees" (Split-Path $ProjectRoot -Leaf)
-        if (Test-Path $worktreePath) {
+        if ((Test-Path $worktreePath) -and $junctionsClean -and -not (Test-JunctionsExist -WorktreePath $worktreePath)) {
             Assert-PathWithinBounds -Path $worktreePath -ExpectedRoot $worktreeParentDir
             Remove-Item -Path $worktreePath -Recurse -Force -ErrorAction SilentlyContinue
             git -C $ProjectRoot worktree prune 2>$null
@@ -2205,9 +2209,13 @@ function Remove-OrphanWorktrees {
             git -C $ProjectRoot worktree remove $worktreePath 2>$null
         }
 
-        # Fallback: direct filesystem delete when git worktree remove leaves dir behind (e.g. Windows open handles)
+        # Fallback: direct filesystem delete when git worktree remove leaves the dir
+        # behind (e.g. Windows open handles). Gated on junctions being gone — on
+        # Windows Remove-Item -Recurse follows junctions and would delete link
+        # targets (shared task state, product workspace). If junctions survived,
+        # skip the delete; the entry is kept below for next-startup retry.
         $worktreeParentDir = Join-Path (Split-Path $ProjectRoot -Parent) "worktrees" (Split-Path $ProjectRoot -Leaf)
-        if ($worktreePath -and (Test-Path $worktreePath)) {
+        if ($worktreePath -and (Test-Path $worktreePath) -and $junctionsClean -and -not (Test-JunctionsExist -WorktreePath $worktreePath)) {
             Assert-PathWithinBounds -Path $worktreePath -ExpectedRoot $worktreeParentDir
             Remove-Item -Path $worktreePath -Recurse -Force -ErrorAction SilentlyContinue
             git -C $ProjectRoot worktree prune 2>$null
